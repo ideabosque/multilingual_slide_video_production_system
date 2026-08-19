@@ -125,9 +125,12 @@ any change to this path. Do not reintroduce `-vsync vfr` here at any fps.
 | `output_dir` | Where to write `slideshow.mp4`, `narration.mp3`, `captions.srt`, `production.json` |
 
 Optional: `--audio-dir` (reuse pre-generated per-slide mp3s named
-`<slide_id>.mp3`), `--no-burn-in` (soft-sub only), `--viewport` (default
-`1920x1080`, must match the value used for `source_images` so Agent 1's
-analysis and the final render agree on layout).
+`<slide_id>.mp3`), `--no-burn-in` (soft-sub only). `render-slideshow`
+itself takes no viewport option — the viewport used to screenshot
+`slides_dir` (`msv slides render-images --viewport ...`, default
+`1920x1080`) must simply match `VIDEO_RESOLUTION`'s width/height in
+`config/video.yaml`, or the scale filter here will be doing real
+resizing instead of a no-op (see `.env.example`'s `SLIDE_VIEWPORT`).
 
 ## Generated outputs
 
@@ -184,11 +187,12 @@ terms, pronunciation hints).
 
 ## Execution procedure
 
-1. Resolve `source_deck`; refuse if `translated_<language>/` or
-   `rendered_<language>/` already exists from a stale prior run for a
-   *different* localization version without a matching content hash (see
-   non-negotiable rules) — regenerate rather than trust a leftover
-   directory.
+1. Resolve `source_deck`. `msv slides apply-translations` always deletes
+   and fully recreates `translated_<language>/` from the original deck
+   before writing anything (`apply_translations.py`'s
+   `shutil.rmtree`+`shutil.copytree`) — a leftover directory from a stale
+   prior run is never partially reused or trusted, it's simply
+   overwritten (see non-negotiable rules).
 2. Load and validate the localization JSON
    (`multilingual_slide_video_agent.schemas.validate_localization`)
    against `slides/manifest.json` — this checks `title` is present, every

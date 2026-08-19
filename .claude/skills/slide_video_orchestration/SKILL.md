@@ -180,7 +180,8 @@ run):
 ## Idempotency and artifact reuse
 
 - `msv pipeline init` records a fingerprint of the source deck
-  (`multilingual_slide_video_agent.state.file_fingerprint`, hashed over
+  (`multilingual_slide_video_agent.state.directory_fingerprint`, hashed
+  over every file's relative path/size/mtime under the deck directory —
   every `slide_NNN.html` plus shared `styles.css`/`assets/`);
   `validate_pipeline` warns if the deck on disk has since changed, so a
   stale resume doesn't silently mix artifacts from two different deck

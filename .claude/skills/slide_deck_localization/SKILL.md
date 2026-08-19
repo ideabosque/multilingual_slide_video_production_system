@@ -170,8 +170,11 @@ top-level README.md), group `msv slides`:
   called here against the *original* deck so Claude can see it, and again
   by Agent 2 against each *translated* deck to produce actual video
   frames.
-- `msv slides validate --slide-analysis ... --localization ... --language ...`
-  — schema + terminology + node-ID-coverage validation.
+- `msv slides validate --slide-analysis ... --localization ... --language ... --manifest state/<run_id>/analysis/slides/manifest.json [--project ...]`
+  — schema + terminology validation, **plus node-ID-coverage validation
+  only when `--manifest` is passed** — omitting it silently skips the
+  "every manifest node has a translation" check (see "Validation
+  criteria" below), so always pass it.
 - Claude's own reasoning over the rendered screenshots (and the
   manifest's extracted text) to write slide descriptions, narration, and
   translations — this is the one step in the whole pipeline that is not a
@@ -202,9 +205,11 @@ narration tone should match what's declared there), `config/terminology.yaml`
      manifest, translated, keyed by its exact `node_id` — both preserving
      tagged terminology exactly and using natural phrasing for the target
      language (not literal word-for-word translation).
-5. Run `msv slides validate` for the slide analysis and each language;
-   fix errors, and seriously consider fixing warnings (long/duplicate
-   captions, missing node translations) before reporting completion to
+5. Run `msv slides validate` for the slide analysis and each language,
+   **passing `--manifest state/<run_id>/analysis/slides/manifest.json`**
+   so node-ID coverage is actually checked — omitting it skips that
+   check silently, not loudly; fix errors, and seriously consider fixing
+   warnings (long/duplicate captions) before reporting completion to
    Agent 4.
 
 ## Validation criteria
