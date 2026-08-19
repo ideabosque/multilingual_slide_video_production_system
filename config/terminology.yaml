@@ -1,0 +1,31 @@
+# Global terminology rules applied across every project and language.
+#
+# `always_preserve` are tokens that must never be machine-translated:
+# company/product names, technical terms, acronyms (see the
+# slide_deck_localization skill). A specific project (a project.json
+# manifest, see that skill's "Required inputs") can extend this list and
+# add its own `forbidden_terms` without touching this file or any code.
+
+always_preserve:
+  - IdeaBosque
+  - API
+  - SKU
+  - ERP
+  - CRM
+
+# Optional pronunciation guidance merged into a language's TTS instructions
+# so preserved acronyms are spoken as letters rather than sounded out as a
+# word (e.g. "API" -> "A-P-I").
+pronunciation_hints:
+  API: "A-P-I"
+  SKU: "S-K-U"
+  ERP: "E-R-P"
+  CRM: "C-R-M"
+
+# Terms that indicate stale or incorrect content (e.g. leftover text from a
+# different draft). "*" applies to every language; a language code adds
+# terms specific to that language's script.
+forbidden_terms:
+  "*": []
+  zh-TW: []
+  ja-JP: []

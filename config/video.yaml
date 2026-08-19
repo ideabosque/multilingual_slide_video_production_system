@@ -1,0 +1,77 @@
+# Rendering defaults for Agent 2 (slideshow_video_production).
+# Overridable via VIDEO_OUTPUT_FORMAT / VIDEO_RESOLUTION in .env for the
+# common cases; anything more specific belongs here.
+
+resolutions:
+  1080p: { width: 1920, height: 1080 }
+  720p: { width: 1280, height: 720 }
+
+render:
+  video_codec: libx264
+  audio_codec: aac
+  crf: 19
+  preset: medium
+  audio_bitrate: 192k
+  faststart: true
+  container: mp4
+  # Constant frame rate the silent slide video is rendered at before the
+  # libass burn-in filter runs. Must NOT be changed back to VFR (`-vsync vfr`)
+  # — the ASS subtitle filter's output timestamps don't align with the
+  # concat demuxer's VFR timing, which silently drops frames and produces a
+  # truncated video (observed: 14 slide images -> 10 frames / 202s instead
+  # of 345s). See slideshow_video_production SKILL.md "Burn-in requires CFR".
+  # 5fps is the right default for this deck shape: every slide is a static
+  # image held for its narration duration, and burned-in captions are
+  # static text — nothing animates, so a low fps cuts file size ~5x with
+  # no perceptible quality loss. Bump only if future deck styles add
+  # per-frame transitions/fades that need smoother motion.
+  fps: 5
+
+pacing:
+  # A slide's on-screen duration is its own narration's actual length plus
+  # this short pause - there is no pre-existing timeline to anchor
+  # against or overrun (see slideshow_video_production SKILL.md "Slide
+  # duration is narration-driven"). Applied after every slide, including
+  # the last one, so the video doesn't end the instant the final word is
+  # spoken.
+  slide_pause_seconds: 0.5
+
+captions:
+  format: ass          # burned-in captions use ASS; an .srt sidecar is also always emitted
+  font_size: 30
+  margin_left: 50
+  margin_right: 50
+  margin_vertical: 30
+  alignment: 2          # bottom-center (libass numpad alignment)
+  burn_in: true          # if false, only the .srt sidecar is produced (soft subs)
+  wrap_style: 0          # ASS WrapStyle: 0 = smart/balanced auto-wrap onto multiple lines.
+                          # Never use 2 (no-wrap) - a caption longer than one line's width
+                          # will silently overflow off both edges of the frame instead of
+                          # wrapping. See SKILL.md "caption vs narration" for why captions
+                          # should rarely need more than 1-2 wrapped lines in the first place.
+  max_chars_soft_limit: 90  # Agent 1 / validate_localization warning threshold (not a hard
+                             # error - some languages are naturally more verbose). Captions
+                             # are meant to be short on-screen highlights, not a transcript.
+
+title_card:
+  # A short marketing headline shown as its own leading segment before the
+  # deck's first slide plays for real - distinct from per-slide captions
+  # (bigger font, its own ASS style). Reuses slide 1's rendered image as
+  # its background (see render_slideshow.py) rather than a blank frame, so
+  # the title doesn't feel disconnected from the deck that follows it.
+  enabled: true
+  duration_seconds: 3.0
+  font_size: 56
+  bold: true
+  alignment: 8   # top-center (libass numpad alignment) - deliberately NOT
+                 # captions.alignment's bottom-center, so the title reads
+                 # as visually distinct from a regular slide caption.
+
+sync:
+  max_duration_drift_seconds: 0.75
+  # The assembled video's length is a straightforward running sum of the
+  # title card plus every slide's (narration + pause) duration - there's
+  # no compositing onto pre-existing footage, so this tolerance only
+  # covers rounding/encoding drift, not the video-source sibling
+  # project's narration-overrun-vs-scene-window concern (which doesn't
+  # apply here at all - see SKILL.md "Slide duration is narration-driven").

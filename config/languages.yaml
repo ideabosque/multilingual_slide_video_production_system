@@ -1,0 +1,104 @@
+# Language / TTS profiles.
+#
+# Adding a language here (and to SUPPORTED_LANGUAGES in .env) is the only
+# step required to have the pipeline produce another localized slideshow —
+# no code changes needed (see "Adding a language" in README.md).
+
+default_language: en-US
+
+default_tts:
+  model: gpt-4o-mini-tts
+  voice: marin
+
+languages:
+  en-US:
+    name: English (United States)
+    voice: marin
+    caption_font: "Noto Sans"
+    tts_instructions: |
+      Speak as a natural, confident presenter walking an audience through a
+      slide deck. Sound conversational, warm, and professional. Do not
+      sound robotic or like a news announcer. Use natural pauses and a
+      relaxed moderate pace.
+
+  zh-TW:
+    name: Traditional Chinese (Taiwan)
+    voice: marin
+    caption_font: "Noto Sans CJK TC"
+    tts_instructions: |
+      請使用自然的台灣中文（繁體中文）口吻。這是一段專業簡報的旁白。
+      語氣自然、親切、有自信，但不要像新聞主播或廣告配音。
+      像簡報者向聽眾實際講解投影片一樣說話，使用自然停頓與語調變化。
+      保留英文/品牌名稱與縮寫的原文發音，不要翻譯專有名詞。
+
+  ja-JP:
+    name: Japanese
+    voice: marin
+    caption_font: "Noto Sans CJK JP"
+    tts_instructions: |
+      Speak in natural Japanese for a professional slide presentation. Be
+      conversational and confident with natural pauses. Preserve
+      configured product names and acronyms in their original form rather
+      than translating them.
+
+  ko-KR:
+    name: Korean
+    voice: marin
+    caption_font: "Noto Sans CJK KR"
+    tts_instructions: |
+      전문적인 슬라이드 프레젠테이션을 위한 자연스러운 한국어로 말하세요.
+      대화하듯 자신감 있게, 자연스러운 쉼을 두고 말하세요.
+      제품명과 약어는 번역하지 말고 원문 그대로 유지하세요.
+
+  es-ES:
+    name: Spanish
+    voice: marin
+    caption_font: "Noto Sans"
+    tts_instructions: |
+      Habla en español natural con un tono profesional, conversacional y
+      seguro, como quien presenta una diapositiva ante una audiencia. Usa
+      pausas naturales entre las ideas y evita sonar robótico o como un
+      locutor. Conserva los nombres de producto y las siglas en su forma
+      original.
+
+  de-DE:
+    name: German
+    voice: marin
+    caption_font: "Noto Sans"
+    tts_instructions: |
+      Sprich in natürlichem Deutsch mit einem professionellen,
+      gesprächigen und selbstbewussten Ton, wie eine Person, die eine
+      Präsentation hält. Verwende natürliche Pausen und vermeide einen
+      roboterhaften oder werbespot-artigen Klang. Behalte Produktnamen und
+      Abkürzungen in ihrer Originalform bei, ohne sie zu übersetzen.
+
+  fr-FR:
+    name: French
+    voice: marin
+    caption_font: "Noto Sans"
+    tts_instructions: |
+      Parle en français naturel, sur un ton professionnel, conversationnel
+      et confiant, comme une personne qui présente un diaporama. Utilise
+      des pauses naturelles entre les idées et évite de sonner robotique
+      ou comme une publicité. Conserve les noms de produits et les sigles
+      dans leur forme originale, sans les traduire.
+
+  ar-SA:
+    name: Arabic
+    voice: marin
+    caption_font: "Noto Sans Arabic"
+    tts_instructions: |
+      تحدث بلغة عربية فصحى معاصرة طبيعية، بأسلوب احترافي وواثق يشبه حديث
+      مقدّم عرض تقديمي أمام جمهور. استخدم وقفات طبيعية بين الأفكار وتجنب
+      النبرة الآلية أو أسلوب الإعلانات. حافظ على أسماء المنتجات
+      والاختصارات كما هي دون ترجمتها.
+
+  zh-CN:
+    name: Simplified Chinese
+    voice: marin
+    caption_font: "Noto Sans CJK SC"
+    tts_instructions: |
+      请使用自然的普通话（简体中文）语气。这是一段专业幻灯片演示的旁白。
+      语气自然、亲切、自信，但不要像新闻主播或广告配音。
+      像演讲者向听众实际讲解幻灯片一样说话，使用自然停顿与语调变化。
+      保留英文/品牌名称与缩写的原文发音，不要翻译专有名词。

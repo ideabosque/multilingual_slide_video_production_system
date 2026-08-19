@@ -216,3 +216,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ----------------------------------
+# multilingual-demo-video-agent project-specific
+# ----------------------------------
+
+# Secrets (.env itself is already covered above)
+config/youtube_client_secret*.json
+client_secret*.json
+
+# Runtime data: large media, per-run pipeline state/logs. Keep the
+# directories themselves tracked (via .gitkeep) but not their contents.
+output/*
+!output/.gitkeep
+state/*
+!state/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
