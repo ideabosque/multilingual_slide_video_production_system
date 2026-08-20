@@ -9,7 +9,7 @@ resolutions:
 render:
   video_codec: libx264
   audio_codec: aac
-  crf: 19
+  crf: 18
   preset: medium
   audio_bitrate: 192k
   faststart: true

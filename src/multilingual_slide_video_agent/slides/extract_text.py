@@ -61,6 +61,13 @@ def _iter_text_nodes(soup: BeautifulSoup):
             continue
         if node.parent is None or node.parent.name in _SKIP_PARENT_TAGS:
             continue
+        # lxml surfaces a phantom "html" text node as a direct child of the
+        # BeautifulSoup document root (parent.name == "[document]"). It is
+        # whitespace/indentation between `<!doctype html>` and `<html>`, not
+        # a real translatable node — but browsers render it as visible text
+        # at the top of the page. Skip any direct child of the document root.
+        if node.parent.name == "[document]":
+            continue
         if not node.strip():
             continue
         yield node

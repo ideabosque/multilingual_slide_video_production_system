@@ -202,14 +202,23 @@ def _build_silent_captioned_video(
         ass_safe = str(ass_path).replace("\\", "/").replace(":", "\\:")
         video_filter += f",ass='{ass_safe}'"
 
+    # At 5fps with static slide images, H.264 encodes consecutive
+    # identical frames as near-zero-bit P/B frames, producing ~20-30kbps
+    # video that blurs text. YouTube's re-encoding makes it worse.
+    # Fix: force every frame to be a keyframe (-g 1 -bf 0) with CRF
+    # quality. Each frame is independently encoded at full quality, so
+    # text stays sharp. File size is larger but fine for YouTube upload.
+    crf = render_cfg.get("crf", 18)
     cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
         "-fps_mode", "cfr", "-r", str(fps), "-pix_fmt", "yuv420p", "-vf", video_filter,
         "-c:v", render_cfg.get("video_codec", "libx264"),
         "-preset", render_cfg.get("preset", "medium"),
-        "-crf", str(render_cfg.get("crf", 19)),
+        "-crf", str(crf),
+        "-g", "1", "-bf", "0",
         str(output),
     ]
+    subprocess.run(cmd, check=True, capture_output=True)
     subprocess.run(cmd, check=True, capture_output=True)
     concat_list.unlink(missing_ok=True)
 
