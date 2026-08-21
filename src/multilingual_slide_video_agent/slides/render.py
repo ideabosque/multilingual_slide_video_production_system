@@ -87,7 +87,7 @@ def render_deck_images(
 
 _ANIMATION_MARKER_START = "<!-- ANIMATION-OVERRIDE -->"
 _ANIMATION_MARKER_END = "<!-- /ANIMATION-OVERRIDE -->"
-_ANIMATION_ASSET_FILES = ("gsap.min.js", "animation_runtime.js", "design_tokens.css")
+_ANIMATION_ASSET_FILES = ("gsap.min.js", "animation_runtime.js", "design_tokens.css", "templates_config.js")
 
 
 def _inject_animation_assets(translated_deck_dir: Path, animation_dir: Path, template_by_slide: dict[str, str]) -> None:
@@ -125,6 +125,7 @@ def _inject_animation_assets(translated_deck_dir: Path, animation_dir: Path, tem
             "<style>html{visibility:hidden}</style>\n"
             '<link rel="stylesheet" href="design_tokens.css">\n'
             f'<script>window.__ANIMATION_TEMPLATE__="{template}";</script>\n'
+            '<script src="templates_config.js"></script>\n'
             '<script src="gsap.min.js"></script>\n'
             '<script src="animation_runtime.js" defer></script>\n'
             f"{_ANIMATION_MARKER_END}\n"

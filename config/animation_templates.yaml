@@ -1,0 +1,220 @@
+# Declarative GSAP shot templates for `msv slides generate-animation`.
+#
+# Each top-level key is a template name (must appear in a slide's
+# `visual_role`, a `--spec` override, or animation_templates.py's
+# position/keyword heuristic to be selected - see that module). Its
+# "steps" list is played, in order, into one gsap.timeline() by the
+# generic engine in slides/assets/animation_runtime.js - adding or
+# tuning a template is normally just editing this file, NOT
+# animation_runtime.js. See
+# .claude/skills/gsap_animation_authoring/SKILL.md "Template config
+# schema" for the full field reference; this file's comments cover the
+# essentials.
+#
+# Step fields:
+#   role      - one of: title, subtitle, body, diagram, stat, cta, nodes
+#               (a role_elements() key in animation_runtime.js) - or a
+#               list of role names tried in order, first non-empty wins
+#               (fallback chain, e.g. [stat, title]).
+#   effect    - one of the three registered primitives in
+#               animation_runtime.js's EFFECTS map: reveal, accent_line,
+#               count_up. A step referencing any other name fails loudly
+#               at bundle-generation time (Python-side validation) - see
+#               animation_templates.py's _validate_template_config.
+#   duration  - optional token name (fast/base/slow/slide_enter/
+#               slide_exit) resolved against config/design_system.yaml's
+#               motion values at render time. Omitted = the effect's own
+#               default (see EFFECTS.reveal in animation_runtime.js).
+#   ease      - optional explicit GSAP ease string. Omitted = the design
+#               system's default ease (power2.out).
+#   position  - optional GSAP timeline position parameter (a number, or
+#               a relative string like ">-0.1"). Omitted = GSAP's normal
+#               sequential placement (right after the previous tween).
+#   position_if_first - optional override for `position`, used only when
+#               this step turns out to be the first one in the template
+#               that actually finds an element and runs (earlier steps
+#               were skipped because their role element is missing).
+#               Needed because a relative position like ">-0.1" isn't
+#               meaningful with nothing before it in the timeline yet.
+#   min_count - optional int, only meaningful when `role` resolves to a
+#               list (e.g. "nodes"/"body") - skip this step if the list
+#               has fewer than this many elements.
+#   id        - optional string other steps can reference via
+#               skip_if_ran.
+#   skip_if_ran - optional step id; this step is skipped entirely if the
+#               named step already ran (used for "N cards, else one
+#               fallback image" either/or beats - see diagram_build).
+#   params    - effect-specific extra values (reveal: y/x/scale/stagger;
+#               stagger accepts either a token name or a plain number of
+#               seconds).
+
+title_reveal:
+  steps:
+    - role: title
+      effect: reveal
+      duration: slide_enter
+      params: {y: 24}
+    - role: title
+      effect: accent_line
+      position: ">-0.1"
+    - role: subtitle
+      effect: reveal
+      duration: slow
+      position: ">-0.1"
+      params: {y: 16}
+
+feature_callout:
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 20, scale: 0.98}
+    - role: title
+      effect: accent_line
+      position: ">-0.08"
+    - role: subtitle
+      effect: reveal
+      duration: base
+      position: ">-0.05"
+      params: {y: 14}
+    - id: body_reveal
+      role: body
+      effect: reveal
+      duration: base
+      position: ">-0.05"
+      position_if_first: 0
+      params: {y: 16, x: -10, stagger: fast}
+
+stat_highlight:
+  steps:
+    - role: [stat, title]
+      effect: count_up
+      position: 0
+    - role: subtitle
+      effect: reveal
+      duration: base
+      position: ">-0.05"
+      params: {y: 12}
+
+diagram_build:
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 18}
+    - role: title
+      effect: accent_line
+      position: ">-0.08"
+    - id: diagram_nodes
+      role: nodes
+      min_count: 2
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      position_if_first: 0
+      params: {y: 14, scale: 0.96, stagger: fast}
+    - role: diagram
+      effect: reveal
+      duration: slide_enter
+      position: ">-0.1"
+      position_if_first: 0
+      skip_if_ran: diagram_nodes
+      params: {scale: 0.96}
+
+closing:
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 20}
+    - role: title
+      effect: accent_line
+      position: ">-0.08"
+    - role: cta
+      effect: reveal
+      duration: base
+      ease: "back.out(1.4)"
+      position: ">-0.05"
+      params: {y: 12, scale: 0.94}
+
+# ---------- added on top of the original five - reuse existing roles/
+# effects rather than inventing new ones, proving out the "adding a
+# template is a YAML edit" claim above. ----------
+
+quote_testimonial:
+  # `title`/`subtitle` are deliberately reused for the quote text and its
+  # attribution line - roleElements()'s selectors (h1/h2 then h1+p/h2+p)
+  # don't care about semantic meaning, only structural position, so a
+  # quote slide authored the normal way (a big heading + a following
+  # line) already matches with zero new roles. No accent_line: a
+  # decorative underline reads as a section break, not as punctuation
+  # under a quote.
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 16, scale: 0.98}
+    - role: subtitle
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      params: {y: 10}
+
+comparison_versus:
+  # `nodes` (the repeated-sibling-group heuristic) generalizes beyond
+  # "diagram" - a 2-panel "A vs B" layout is usually authored as 2
+  # sibling divs sharing one class, exactly what that heuristic finds.
+  # Falls back to a plain `body` list reveal if the deck doesn't express
+  # its comparison as a repeated-sibling group.
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 18}
+    - role: title
+      effect: accent_line
+      position: ">-0.08"
+    - id: comparison_panels
+      role: nodes
+      min_count: 2
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      position_if_first: 0
+      params: {y: 16, stagger: base}
+    - role: body
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      position_if_first: 0
+      skip_if_ran: comparison_panels
+      params: {y: 16, stagger: fast}
+
+timeline_roadmap:
+  # Same `nodes`-or-`body` fallback shape as comparison_versus, but a
+  # horizontal slide-in (`x`) with a slower `base` stagger reads as
+  # sequential steps building up left-to-right, rather than
+  # comparison_versus's simultaneous vertical rise on both sides.
+  steps:
+    - role: title
+      effect: reveal
+      duration: slow
+      params: {y: 18}
+    - role: title
+      effect: accent_line
+      position: ">-0.08"
+    - id: timeline_steps
+      role: nodes
+      min_count: 2
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      position_if_first: 0
+      params: {x: -24, stagger: base}
+    - role: body
+      effect: reveal
+      duration: base
+      position: ">-0.1"
+      position_if_first: 0
+      skip_if_ran: timeline_steps
+      params: {y: 16, stagger: fast}

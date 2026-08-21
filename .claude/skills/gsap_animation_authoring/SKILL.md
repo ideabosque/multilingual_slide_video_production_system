@@ -24,7 +24,65 @@ verify — a silently-broken selector is a worse failure than a script error
 (see `marketing_animation_pipeline_plan.md` §4.1's validation note). This
 skill exists to keep that code disciplined.
 
+**Two different jobs, most of the time only the first applies:**
+
+1. **Adding or tuning a template** — the common case. Templates
+   (`title_reveal`, `feature_callout`, `stat_highlight`, `diagram_build`,
+   `closing`, `quote_testimonial`, `comparison_versus`, `timeline_roadmap`,
+   or a new one) are declarative data in `config/animation_templates.yaml`,
+   not JS — see "Template config schema" below. Editing that file is the
+   whole job; no code changes.
+2. **Adding a new *effect primitive*** — rare. Only needed when a template
+   needs a kind of motion the existing three effects (`reveal`,
+   `accent_line`, `count_up`) can't express as parameters. This means a
+   real JS change in `slides/assets/animation_runtime.js`'s `EFFECTS`
+   registry, plus a matching Python-side name in
+   `animation_templates.py`'s `_KNOWN_EFFECTS`. The rules below (rule 1
+   especially) apply to that JS, not to the YAML.
+
+## Template config schema
+
+`config/animation_templates.yaml` — see that file's own header comment for
+the authoritative field reference; summarized here:
+
+- **Top-level key** = template name. Selected per-slide by `visual_role` in
+  `slide_analysis.json`, a `--spec` override, or `animation_templates.py`'s
+  position/keyword heuristic.
+- **`steps`** = an ordered list played into one `gsap.timeline()` by the
+  generic engine (`runTemplateSteps` in `animation_runtime.js`). Each step:
+  - `role` — one of `title, subtitle, body, diagram, stat, cta, nodes`
+    (an `animation_runtime.js` `roleElements()` key), or a list tried in
+    order, first non-empty wins (e.g. `[stat, title]`).
+  - `effect` — `reveal` (fade/slide/scale, singular or array target,
+    optional `stagger`), `accent_line` (drawn underline after the target),
+    or `count_up` (number count-up, regex-parsed from the target's text).
+    Any other name fails loudly at bundle-generation time
+    (`AnimationTemplateConfigError`), not silently at render time.
+  - `duration` — a token (`fast/base/slow/slide_enter/slide_exit`)
+    resolved against `config/design_system.yaml`'s motion values, never a
+    literal number.
+  - `position` / `position_if_first` — GSAP timeline position parameter;
+    the `_if_first` variant only applies when this step turns out to be
+    the first one in the template that actually finds an element (earlier
+    steps were skipped) — needed because a relative position like
+    `">-0.1"` isn't meaningful with nothing before it yet.
+  - `min_count`, `id`, `skip_if_ran` — support the "N repeated cards, else
+    one fallback element" either/or pattern (see `diagram_build`'s
+    `nodes` → `diagram` fallback).
+- A step whose `role` resolves to nothing (element missing) is skipped,
+  same "missing optional element ≠ broken selector" principle as before
+  (self-check item 5).
+
+Adding a sixth template, or changing how a card grid staggers in, is
+normally just a new/edited entry in that YAML file — verified by this
+project's own tests in `tests/test_animation_templates.py` and a real
+Playwright capture smoke test, not by hand-reading JS.
+
 ## Core GSAP rules for this pipeline
+
+These rules govern the fixed engine and effect primitives in
+`animation_runtime.js` — the code most template work never touches (see
+"Purpose" above). They still matter when adding a genuinely new effect.
 
 - **`gsap.timeline()`, not ad hoc `gsap.to()` calls.** Every slide's
   animation is one timeline so its total duration is knowable up front
@@ -84,12 +142,14 @@ Never hardcode a color, size, or duration. Read them from
 `docs/marketing-animation-pipeline-plan.md` §4.2) via the CSS custom
 properties `slides/generate_animation.py` injects alongside the timeline
 (`--ds-color-brand-primary`, `--ds-motion-duration-base-ms`, etc. — see
-that module's docstring for the full property list). A timeline template
-in `slides/animation_templates.py` reads these via
-`getComputedStyle(document.documentElement)` at animation-build time, not
-by embedding literal values in the generated JS. This is what makes one
-generated `animation.js` stay correct if `design_system.yaml` is ever
-revised — the timeline structure doesn't change, only the values it reads.
+that module's docstring for the full property list). `animation_runtime.js`'s
+`readTokens()` reads these via `getComputedStyle(document.documentElement)`
+at animation-build time (once per slide, before the timeline is built), not
+by embedding literal values anywhere — a template's `duration`/`stagger`
+YAML fields are token *names* (`"base"`, `"fast"`, ...), resolved against
+this same `ds` object by the generic engine. This is what makes the whole
+bundle stay correct if `design_system.yaml` is ever revised — nothing
+generated needs to change, only the values it reads.
 
 Default easing for anything that isn't an explicit dramatic beat:
 `"power2.out"` — GSAP's closest equivalent to the plain CSS `ease-out` the
@@ -107,19 +167,23 @@ Two separate steps, not one — this replaces an earlier, inaccurate draft
 of this section written before Phase 2/3 were actually implemented:
 
 1. **`slides/generate_animation.py`** (`msv slides generate-animation`)
-   writes the reusable bundle once per deck — `animation_runtime.js`
-   (the actual timelines, this skill's "how"), the vendored
+   writes the reusable bundle once per deck — `animation_runtime.js` (the
+   fixed generic engine + effect primitives, this skill's "how"),
+   `templates_config.js` (`window.__ANIMATION_TEMPLATES__`, the actual
+   per-template step data, generated fresh each time from
+   `config/animation_templates.yaml` — this skill's "what"), the vendored
    `gsap.min.js`, and `design_tokens.css` (the design-system CSS custom
    properties) — into `state/<run_id>/analysis/slides/animation/`. It
    does **not** touch any deck's HTML.
 2. **`slides/render.py`'s `_inject_animation_assets`** (called from
-   `render_deck_animation_clips`, at capture time) copies those three
+   `render_deck_animation_clips`, at capture time) copies those four
    files into that language's already-translated deck directory and
    injects, before `</head>` in every `slide_NNN.html`:
    ```html
    <style>html{visibility:hidden}</style>
    <link rel="stylesheet" href="design_tokens.css">
    <script>window.__ANIMATION_TEMPLATE__="feature_callout";</script>
+   <script src="templates_config.js"></script>
    <script src="gsap.min.js"></script>
    <script src="animation_runtime.js" defer></script>
    ```
@@ -128,6 +192,9 @@ of this section written before Phase 2/3 were actually implemented:
    conflict (CJK font injection runs first if both apply to the same
    deck). GSAP itself loads from that locally-vendored copy (no CDN —
    the deck must render identically offline and CI-deterministically).
+   `templates_config.js` and the inline `__ANIMATION_TEMPLATE__` name are
+   both plain (non-`defer`) scripts, so both are guaranteed to run before
+   the deferred `animation_runtime.js` reads them in `run()`.
 
 **The inline `html{visibility:hidden}` matters, and isn't optional.**
 Without it, the browser paints the slide at its normal/final CSS state
@@ -138,10 +205,10 @@ output, and fixed — not a theoretical concern). `run()`'s last line,
 page synchronously right after the timeline is constructed — GSAP's
 `.from()`/timeline creation applies "from" starting values synchronously,
 before that line runs, so the first visible paint already shows every
-animated element at its starting state. If a template dynamically
-creates new elements (e.g. `drawAccentLine`'s decorative underline), they
-inherit this same guarantee automatically as long as they're created
-*inside* the template function GSAP calls, before `run()` returns.
+animated element at its starting state. If an effect dynamically creates
+new elements (e.g. `accent_line`'s decorative underline), they inherit
+this same guarantee automatically as long as they're created *inside* the
+effect function `runTemplateSteps` calls, before `run()` returns.
 
 ## Self-check before treating a generated timeline as done
 

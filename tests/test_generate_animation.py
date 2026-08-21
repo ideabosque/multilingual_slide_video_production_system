@@ -2,11 +2,13 @@ import json
 
 import pytest
 
+from multilingual_slide_video_agent.slides.animation_templates import load_template_config
 from multilingual_slide_video_agent.slides.generate_animation import (
     ANIMATION_JS_NAME,
     DESIGN_TOKENS_CSS_NAME,
     GSAP_JS_NAME,
     SPEC_FILE_NAME,
+    TEMPLATES_CONFIG_JS_NAME,
     GenerateAnimationError,
     generate_deck_animation,
 )
@@ -34,6 +36,18 @@ def test_generate_deck_animation_writes_expected_bundle(deck_dir, tmp_path):
     assert spec["slides"][0]["template"] == "title_reveal"
     assert spec["slides"][1]["template"] == "closing"
     assert manifest["slides"][0]["slide_id"] == "slide_001"
+
+
+def test_generate_deck_animation_writes_declarative_templates_config(deck_dir, tmp_path):
+    out_dir = tmp_path / "animation"
+    generate_deck_animation(deck_dir=deck_dir, out_dir=out_dir)
+
+    templates_js = (out_dir / TEMPLATES_CONFIG_JS_NAME).read_text(encoding="utf-8")
+    assert templates_js.startswith("window.__ANIMATION_TEMPLATES__ = ")
+    embedded = json.loads(templates_js[len("window.__ANIMATION_TEMPLATES__ = "):-1])
+    # The bundle embeds the same config animation_runtime.js's generic
+    # engine will read at capture time - not a copy that can drift.
+    assert embedded == load_template_config()
 
 
 def test_generate_deck_animation_uses_slide_analysis_descriptions(deck_dir, tmp_path):

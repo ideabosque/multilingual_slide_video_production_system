@@ -22,14 +22,19 @@ five-agent structure).
   GreenSock acquisition.
 - **`slides/design_system.py`** — loads `config/design_system.yaml`
   (§4.2) and exposes it as CSS custom properties for injection.
-- **`slides/animation_templates.py`** + **`slides/assets/animation_runtime.js`**
-  — five named shot templates (`title_reveal`/`feature_callout`/
-  `stat_highlight`/`diagram_build`/`closing`, this project's own design —
-  see §4.1a) and the role-selection heuristic that picks one per slide.
-  Element targeting uses common semantic HTML (h1/h2, li/p, svg/img) with
-  an escape hatch for explicit `.slide-*` classes if a deck defines them,
-  since real decks predate this feature and aren't authored with
-  animation-specific classes.
+- **`config/animation_templates.yaml`** + **`slides/assets/animation_runtime.js`**
+  — eight named shot templates as declarative data (`title_reveal`/
+  `feature_callout`/`stat_highlight`/`diagram_build`/`closing`/
+  `quote_testimonial`/`comparison_versus`/`timeline_roadmap`, this
+  project's own design — see §4.1a and §4.1's "template definitions are
+  now declarative config" note) played by a small generic engine + three
+  effect primitives in `animation_runtime.js`, plus
+  `slides/animation_templates.py`'s role-selection heuristic that picks
+  one per slide. Element targeting uses common semantic HTML (h1/h2, li/p,
+  svg/img) with an escape hatch for explicit `.slide-*` classes if a deck
+  defines them, since real decks predate this feature and aren't authored
+  with animation-specific classes (a repeated-sibling-group fallback tier
+  widens this further — see "Follow-up fixes" below).
 - **`slides/generate_animation.py`** (`msv slides generate-animation`) —
   materializes one deck's animation bundle once, per §4.1.
 - **`slides/render.py`'s `render_deck_animation_clips`** — injects the
@@ -243,40 +248,52 @@ Concretely:
 GSAP timeline per deck, at runtime, using `gsap-skills`/`motion-design-skill`
 as authoring guidance.** That's not what got built, and after the
 follow-up conversation that confirmed it explicitly (see "Follow-up fixes
-and enhancements" above): **the animation code is a fixed, hand-written
-template library, not agent-generated per deck.** This is the confirmed,
-final architecture, not a stopgap:
+and enhancements" above): **the animation code is a fixed template
+library, not agent-generated per deck.** This is the confirmed, final
+architecture, not a stopgap. It splits into two layers (see "Implemented:
+template definitions are now declarative config" below for why):
 
-- **`slides/assets/animation_runtime.js`** holds five named shot templates
-  (`title_reveal`/`feature_callout`/`stat_highlight`/`diagram_build`/`closing`)
-  as static JavaScript — written once, reviewed, tested, reused unmodified
-  across every deck. No LLM call writes or modifies this file at pipeline
-  run time; `generate_deck_animation()` makes zero LLM calls (verified by
-  reading the code, not assumed).
+- **`slides/assets/animation_runtime.js`** holds a small, fixed *generic
+  engine* plus three reusable *effect primitives* (`reveal`, `accent_line`,
+  `count_up`) as static JavaScript — written once, reviewed, tested, reused
+  unmodified across every deck and every template.
+- **`config/animation_templates.yaml`** holds the eight named shot templates
+  (`title_reveal`/`feature_callout`/`stat_highlight`/`diagram_build`/`closing`/
+  `quote_testimonial`/`comparison_versus`/`timeline_roadmap`)
+  as *declarative data* — which effect, on which role element, in what
+  order/timing — not code. No LLM call writes or modifies either file at
+  pipeline run time; `generate_deck_animation()` makes zero LLM calls
+  (verified by reading the code, not assumed).
 - **`slides/animation_templates.py`'s `choose_template`** — a deterministic
-  Python heuristic, not an agent — assigns each slide one of the five
-  template *names* by slide position (first → `title_reveal`, last →
-  `closing`) and keyword-matching its `slide_analysis.json` description
-  (`"%"` → `stat_highlight`, `"architecture"`/`"diagram"` → `diagram_build`,
-  else `feature_callout`).
+  Python heuristic, not an agent — assigns each slide one of the template
+  *names* by slide position (first → `title_reveal`, last → `closing`) and
+  keyword-matching its `slide_analysis.json` description (`"%"` →
+  `stat_highlight`, `"architecture"`/`"diagram"` → `diagram_build`,
+  `"quote"`/`"testimonial"` → `quote_testimonial`, `"vs."`/`"versus"` →
+  `comparison_versus`, `"roadmap"`/`"milestone"` → `timeline_roadmap`, else
+  `feature_callout`). `TEMPLATE_NAMES` is derived from the YAML's keys, so
+  a template added there is automatically valid everywhere it's checked.
 - `msv slides generate-animation` (Agent 1, alongside `slide_analysis.json`)
   runs this heuristic once per deck and writes the resulting `spec.json`
-  (slide → template name) plus the static JS/CSS bundle — same
+  (slide → template name) plus the JS/CSS/config bundle — same
   cache-once-reuse-across-languages shape as originally planned, just with
   a fixed library instead of generated code underneath it.
 - An agent (or a human) *can* override the heuristic's choice via
-  `--spec <file.json>` — but only to pick among the five existing template
+  `--spec <file.json>` — but only to pick among the existing template
   *names* per slide, never to author new motion design. Extending the
-  template library itself (a 6th template, retuning an existing one) is a
-  manual code change, reviewed like any other code, not a per-run
-  operation.
+  template library itself (a new template, retuning an existing one) is
+  normally just a YAML edit to `config/animation_templates.yaml`, reviewed
+  like any other config change; only a genuinely new *effect* (not
+  expressible as `reveal`/`accent_line`/`count_up` parameters) needs a JS
+  change, and that's rare.
 
 **What `gsap_animation_authoring`/`motion_design_principles` are actually
 for, given this:** template-library *maintenance* guidance, not per-deck
 runtime authoring. They matter when someone (human or agent) is asked to
-add a new template or retune an existing one in `animation_runtime.js` —
-not on a normal `generate-animation`/`render-marketing-animation` run,
-which never loads either skill.
+add a new template (a YAML edit) or a new effect primitive (a JS change)
+in `animation_runtime.js` — not on a normal
+`generate-animation`/`render-marketing-animation` run, which never loads
+either skill.
 
 **Implemented: improved *selection* quality, since generation is
 intentionally fixed.** The one real lever for better output is which
@@ -298,6 +315,77 @@ cover the priority ordering and the loud-failure case; `spec.json` now
 also records `visual_role_used` per slide for auditability. This improved
 selection quality without reopening whether an agent should write GSAP
 code — that stays fixed, reviewable, and testable.
+
+**Implemented: template definitions are now declarative config, not
+per-template JS.** Follow-up question after the above: each of the five
+templates was still its own hand-written JavaScript function in
+`animation_runtime.js` — adding or tuning one meant a JS code change, and
+`generate-animation`'s bundle was identical for every deck (nothing
+per-run to configure). Refactored to split "what a template does" from
+"how the engine plays it":
+- `config/animation_templates.yaml` now holds each template as an ordered
+  list of `steps` — `role` (which slide element), `effect` (`reveal` /
+  `accent_line` / `count_up`), timing (`duration` token, `position`),
+  and a few composition primitives for the "N repeated cards, else one
+  fallback" pattern (`min_count`, `id`, `skip_if_ran`) — see that file's
+  header comment for the full field reference, and
+  `gsap_animation_authoring/SKILL.md`'s "Template config schema" for the
+  distilled version.
+- `animation_templates.py` loads and validates that YAML at import time
+  (`load_template_config`) — a malformed template (unknown role/effect/
+  duration token, a `skip_if_ran` pointing at a nonexistent step id)
+  raises `AnimationTemplateConfigError` immediately, not a silent no-op or
+  a browser console error discovered later. `TEMPLATE_NAMES` is now
+  derived from the YAML's keys rather than hardcoded, so a new template
+  added there is automatically valid everywhere `TEMPLATE_NAMES` is
+  checked (`visual_role`, `--spec`).
+- `generate_deck_animation()` embeds the loaded config verbatim into the
+  bundle as `templates_config.js` (`window.__ANIMATION_TEMPLATES__`,
+  alongside the existing `animation_runtime.js`/`gsap.min.js`/
+  `design_tokens.css`) — `slides/render.py`'s injection copies and
+  `<script>`-tags all four files now, still idempotent by marker comment.
+- `animation_runtime.js` no longer has one function per template — it has
+  one generic `runTemplateSteps` engine plus the three effect primitives.
+  Adding a template is a YAML edit; adding a new *effect* is the only case
+  that still needs a JS change (see "Where the animation code comes from"
+  above).
+- Deliberately *not* deck-specific or regenerated per run — this file
+  stays a shared, project-level config (same status as
+  `design_system.yaml`) so every deck gets the same brand-consistent
+  motion; per-deck variation stays where it already was, in *which*
+  template a slide gets (`visual_role`/heuristic/`--spec`), not in
+  redefining the templates themselves.
+- Verified against real production content, not just unit tests: the
+  refactored bundle was generated and captured (via Playwright, real
+  13-slide deck, all five original templates exercised) with zero console
+  errors, and frame extraction confirmed the `diagram_build`
+  staggered-card reveal still animates correctly end-to-end through the
+  new config path. 7 new tests (`test_animation_templates.py`,
+  `test_generate_animation.py`) cover config validation and the embedded-
+  bundle round-trip.
+
+**Implemented: three more templates, added as pure config.** Direct
+follow-up proof of the refactor above — `quote_testimonial` (a
+quote/testimonial slide; reuses the `title`/`subtitle` roles for the
+quote text and attribution line, no accent-line), `comparison_versus`
+(an "A vs B" two-panel slide; reuses the `nodes` repeated-sibling-group
+role, falls back to `body`), and `timeline_roadmap` (a milestone/roadmap
+sequence; same `nodes`/`body` shape as `comparison_versus` but with a
+horizontal `x` slide-in instead of a vertical `y` rise, so it reads as
+steps building up left-to-right rather than a simultaneous two-sided
+reveal). All three were added entirely in
+`config/animation_templates.yaml` plus three keyword-hint tuples in
+`animation_templates.py`'s heuristic (`_QUOTE_HINTS`/`_COMPARISON_HINTS`/
+`_TIMELINE_HINTS`) — zero changes to `animation_runtime.js`, confirming
+the refactor's actual point. Verified with a real Playwright capture
+against a purpose-built 3-slide fixture deck (one slide per new
+template, each forced via `visual_role`): zero console errors, and frame
+extraction confirmed the quote's fade-in, the comparison's simultaneous
+two-panel reveal, and the roadmap's staggered left-to-right slide-in all
+render as intended. 3 new tests cover the heuristic hints; the existing
+generic config-validation tests (`test_every_step_has_a_known_role_and_effect`,
+etc.) covered the new templates automatically since they iterate
+whatever `load_template_config()` returns, not a hardcoded list.
 
 **Validation surface that stays true regardless of selection mechanism:**
 browser console errors during capture (a bug in a template, or a selector

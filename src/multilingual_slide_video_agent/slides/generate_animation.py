@@ -20,6 +20,7 @@ from typing import Any
 from multilingual_slide_video_agent.slides.animation_templates import (
     TEMPLATE_NAMES,
     build_spec,
+    load_template_config,
 )
 from multilingual_slide_video_agent.slides.design_system import build_css_custom_properties
 from multilingual_slide_video_agent.slides.extract_text import list_slide_files
@@ -30,6 +31,7 @@ _VENDOR_DIR = Path(__file__).parent / "vendor"
 ANIMATION_JS_NAME = "animation_runtime.js"
 GSAP_JS_NAME = "gsap.min.js"
 DESIGN_TOKENS_CSS_NAME = "design_tokens.css"
+TEMPLATES_CONFIG_JS_NAME = "templates_config.js"
 SPEC_FILE_NAME = "spec.json"
 
 
@@ -101,6 +103,8 @@ def generate_deck_animation(
     shutil.copy2(_ASSETS_DIR / ANIMATION_JS_NAME, out_path / ANIMATION_JS_NAME)
     shutil.copy2(_VENDOR_DIR / GSAP_JS_NAME, out_path / GSAP_JS_NAME)
     (out_path / DESIGN_TOKENS_CSS_NAME).write_text(build_css_custom_properties(), encoding="utf-8")
+    templates_js = "window.__ANIMATION_TEMPLATES__ = " + json.dumps(load_template_config(), ensure_ascii=False) + ";"
+    (out_path / TEMPLATES_CONFIG_JS_NAME).write_text(templates_js, encoding="utf-8")
 
     manifest = {
         "source_deck": str(deck_path),

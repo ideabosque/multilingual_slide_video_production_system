@@ -290,14 +290,20 @@ validation tooling around that step.
 untracked side artifact (`marketing_animation.mp4`) — a GSAP-animated
 motion-graphics rebuild of an already-produced language, never a
 replacement for `slideshow.mp4` and never part of the tracked pipeline
-stages. Each slide gets one of five shot templates — `title_reveal`,
+stages. Each slide gets one of eight shot templates — `title_reveal`,
 `feature_callout`, `stat_highlight` (real number count-up), `diagram_build`
-(staggered per-card reveal), `closing` — picked by a deterministic
+(staggered per-card reveal), `closing`, `quote_testimonial`,
+`comparison_versus`, `timeline_roadmap` — picked by a deterministic
 heuristic (position + keyword match on the slide's description), or by an
 optional `visual_role` field Agent 1 can assign per slide in
 `slide_analysis.json` (takes priority over the heuristic when present).
-Both are a fixed, hand-written template library, not agent-generated code
-per deck — see `docs/marketing-animation-pipeline-plan.md` §4.1 for why,
+Both are a fixed template library, not agent-generated code per deck —
+the templates themselves are declarative data in
+`config/animation_templates.yaml` (which role, which effect, what
+timing/order), played by a small generic engine + three reusable effect
+primitives (`reveal`/`accent_line`/`count_up`) in `animation_runtime.js`;
+adding or tuning a template is normally a YAML edit, not a JS change. See
+`docs/marketing-animation-pipeline-plan.md` §4.1 for why,
 and `.claude/skills/gsap_animation_authoring/SKILL.md` /
 `.claude/skills/motion_design_principles/SKILL.md` for the "how"/"which
 template" guidance that applies only when someone extends the library
@@ -424,7 +430,8 @@ src/multilingual_slide_video_agent/
                       # + render_marketing_animation.py (optional GSAP-animated side artifact)
   publishing/         # YouTube upload (same shape as the video-source project)
   cli.py            # the `msv` command groups
-config/            # languages.yaml, terminology.yaml, video.yaml, design_system.yaml
+config/            # languages.yaml, terminology.yaml, video.yaml, design_system.yaml,
+                   # animation_templates.yaml (the 5 GSAP shot templates, as data)
 docs/              # marketing-animation-pipeline-plan.md
 output/ state/ logs/   # runtime data (git-ignored except .gitkeep)
 tests/             # pytest unit tests

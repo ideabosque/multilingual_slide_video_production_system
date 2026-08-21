@@ -12,8 +12,8 @@ public README (fetched during research for
 `docs/marketing-animation-pipeline-plan.md`) — **not a verbatim copy of
 that repo's files**, which weren't directly accessible during this build.
 This is this project's own distilled version, scoped to picking and tuning
-a shot template from `slides/animation_templates.py`, not general UI
-animation.
+a shot template from `config/animation_templates.yaml` (selected via
+`slides/animation_templates.py`), not general UI animation.
 
 ## Purpose
 
@@ -34,15 +34,23 @@ visual content:
 | Deck opener | `title_reveal` | Slide 1, or any slide whose `slide_analysis.json` role is "title" |
 | Single key point, minimal supporting text | `feature_callout` | A slide making one claim with a short supporting line |
 | A number/metric is the point | `stat_highlight` | A slide whose primary content is a number (percentage, count, duration) |
-| Structural/architecture content | `diagram_build` | A slide with a node/flow/system diagram (already has `.slide-diagram` markup from the deck author) |
+| Structural/architecture content | `diagram_build` | A slide with a node/flow/system diagram (already has `.slide-diagram` markup from the deck author), or a repeated-card grid |
 | Deck closer / CTA | `closing` | The last slide, or one containing a call-to-action |
+| Quote or testimonial | `quote_testimonial` | A slide whose content is a single quoted statement plus attribution |
+| Two-sided comparison | `comparison_versus` | An "A vs B" / before-vs-after slide, usually two side-by-side panels |
+| Sequence of milestones/steps | `timeline_roadmap` | A roadmap, phased plan, or step-by-step sequence |
 | Everything else | `feature_callout` (default) | The safe default — don't force an ill-fitting template onto content that doesn't match any of the above |
 
-Do not invent a new template per deck. A small, consistent set of
+Do not invent a one-off template per deck. A small, consistent set of
 templates reused across every deck is the entire point (§4.1a of the
 plan) — the failure mode this replaces is `render_marketing_animation.py`'s
-old per-deck hardcoded keyword matching, and a new one-off template per
-slide just reintroduces that same problem one level up.
+old per-deck hardcoded keyword matching, and a one-off template for a
+single slide just reintroduces that same problem one level up. Adding a
+*genuinely reusable* new template (one likely to recur across decks) is
+fine and cheap — it's a YAML entry in `config/animation_templates.yaml`,
+not a code change (see `gsap_animation_authoring/SKILL.md`'s "Template
+config schema") — but it should still earn its place the way the three
+above did: a real recurring slide *shape*, not a per-deck special case.
 
 ## Timing discipline
 
@@ -86,11 +94,20 @@ Each template's entrance is more than opacity+y now (`slides/assets/animation_ru
   which decks actually get a staggered per-item reveal instead of no
   animation firing at all (see `gsap_animation_authoring/SKILL.md`'s
   "Injection point" for why this matters more than it sounds).
-- **`title_reveal`/`feature_callout`/`diagram_build`/`closing`** draw a
-  short accent-colored underline beneath the headline after it settles —
+- **Every template except `stat_highlight` and `quote_testimonial`** draws
+  a short accent-colored underline beneath the headline after it settles —
   a decorative-only beat (a DOM failure here is swallowed, never breaks
-  the timeline). `stat_highlight` deliberately skips this, keeping focus
-  on the number.
+  the timeline). `stat_highlight` skips it to keep focus on the number;
+  `quote_testimonial` skips it because an underline under a quote reads as
+  a section break, not punctuation.
+- **`comparison_versus`/`timeline_roadmap`** reuse the same repeated-
+  sibling-group `nodes` selection as `diagram_build` for their panels/steps,
+  but differ in motion: `comparison_versus` reveals both sides with a
+  vertical rise (`y`) at roughly the same pace, reading as simultaneous;
+  `timeline_roadmap` uses a horizontal slide-in (`x`) with a slightly
+  slower stagger, reading as a sequence building up left-to-right. Both
+  fall back to a plain `body` list reveal if the deck doesn't express its
+  content as a repeated-sibling group.
 
 ## Choreography ordering within a template
 

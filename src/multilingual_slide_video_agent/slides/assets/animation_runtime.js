@@ -1,8 +1,15 @@
 /*
  * GSAP animation runtime for one slide deck. Identical file across every
- * slide in a deck (see .claude/skills/gsap_animation_authoring/SKILL.md
- * "Injection point") - only the tiny inline `window.__ANIMATION_TEMPLATE__`
- * assignment written before this script differs per slide.
+ * slide in every deck (see .claude/skills/gsap_animation_authoring/SKILL.md
+ * "Injection point") - it is a generic *engine* plus a small fixed
+ * registry of effect primitives (reveal/accent_line/count_up), not
+ * per-template code. The actual templates (title_reveal, feature_callout,
+ * ...) are declarative data from templates_config.js
+ * (window.__ANIMATION_TEMPLATES__, generated from
+ * config/animation_templates.yaml) - per-slide, only the tiny inline
+ * `window.__ANIMATION_TEMPLATE__` assignment written before this script
+ * differs. Adding or tuning a template is normally a YAML edit in that
+ * file, not a change here - see its header comment for the step schema.
  *
  * Element targeting: decks are NOT authored with animation-specific CSS
  * classes (they predate this feature) - `pickEl`/`pickAll` below try, in
@@ -10,11 +17,10 @@
  * then a *repeated-sibling-group* heuristic (real decks commonly express
  * card/row/layer grids as N sibling <div>s sharing one class - e.g.
  * `.layer-stack > .layer` - rather than semantic <li>/<p>), then common
- * semantic HTML as a last resort. A shot template that finds nothing for
- * a given role simply skips that beat (see buildTimeline's per-role
- * guards) rather than throwing, since a missing optional element is not
- * the same failure class as a broken selector (see SKILL.md's self-check
- * item 5).
+ * semantic HTML as a last resort. A template step whose role resolves to
+ * nothing simply skips that beat (see runTemplateSteps) rather than
+ * throwing, since a missing optional element is not the same failure
+ * class as a broken selector (see SKILL.md's self-check item 5).
  */
 (function () {
   "use strict";
@@ -84,6 +90,12 @@
       diagram: pickEl(".slide-diagram", "svg, .diagram, img"),
       stat: pickEl(".slide-stat, .slide-stat-number", "[data-stat], .stat"),
       cta: pickEl(".slide-cta", "a.btn, button, .cta"),
+      // `.slide-diagram-node` is an explicit opt-in for a deck author who
+      // wants to mark specific elements; pickAll's second tier
+      // (findRepeatedSiblingGroup) covers the common case with no deck-
+      // author effort - most decks express a "diagram" as a grid of N
+      // sibling cards, not an <svg>/<img>.
+      nodes: pickAll(".slide-diagram-node", "__no_semantic_fallback__"),
     };
   }
 
@@ -136,92 +148,114 @@
     }, position);
   }
 
-  // ---------- shot templates (see motion_design_principles SKILL.md) ----------
+  // ---------- generic template engine ----------
+  // A "template" is declarative data from templates_config.js
+  // (window.__ANIMATION_TEMPLATES__, generated from
+  // config/animation_templates.yaml - see that file's header comment for
+  // the step schema) - not JS code. Adding or tuning a template is
+  // normally a YAML edit; this engine and the three effect primitives
+  // below are the small, fixed surface that YAML can't express (see
+  // motion_design_principles SKILL.md and gsap_animation_authoring
+  // SKILL.md's "Template config schema").
 
-  function titleReveal(tl, ds, els) {
-    if (els.title) {
-      tl.from(els.title, { opacity: 0, y: 24, duration: ds.slideEnter, ease: ds.ease });
-      drawAccentLine(tl, ds, els.title, ">-0.1");
-    }
-    if (els.subtitle) {
-      tl.from(els.subtitle, { opacity: 0, y: 16, duration: ds.durationSlow, ease: ds.ease }, ">-0.1");
-    }
-  }
-
-  function featureCallout(tl, ds, els) {
-    if (els.title) {
-      tl.from(els.title, { opacity: 0, y: 20, scale: 0.98, duration: ds.durationSlow, ease: ds.ease });
-      drawAccentLine(tl, ds, els.title, ">-0.08");
-    }
-    if (els.subtitle) {
-      tl.from(els.subtitle, { opacity: 0, y: 14, duration: ds.durationBase, ease: ds.ease }, ">-0.05");
-    }
-    if (els.body.length) {
-      tl.from(els.body, {
-        opacity: 0, y: 16, x: -10, duration: ds.durationBase, ease: ds.ease,
-        stagger: ds.durationFast,
-      }, els.title ? ">-0.05" : 0);
-    }
-  }
-
-  function statHighlight(tl, ds, els) {
-    var focal = els.stat || els.title;
-    if (focal) {
-      animateCountUp(tl, ds, focal, 0);
-    }
-    if (els.subtitle) {
-      tl.from(els.subtitle, { opacity: 0, y: 12, duration: ds.durationBase, ease: ds.ease }, ">-0.05");
-    }
-  }
-
-  function diagramBuild(tl, ds, els) {
-    if (els.title) {
-      tl.from(els.title, { opacity: 0, y: 18, duration: ds.durationSlow, ease: ds.ease });
-      drawAccentLine(tl, ds, els.title, ">-0.08");
-    }
-    // `.slide-diagram-node` is an explicit opt-in for a deck author who
-    // wants to mark specific elements; pickAll's second tier
-    // (findRepeatedSiblingGroup) covers the common case with no
-    // deck-author effort - most decks express a "diagram" as a grid of N
-    // sibling cards, not an <svg>/<img>, so a staggered per-card reveal is
-    // usually the right "build" effect even without a dedicated diagram
-    // element.
-    var nodes = pickAll(".slide-diagram-node", "__no_semantic_fallback__");
-    if (nodes.length > 1) {
-      tl.from(nodes, {
-        opacity: 0, y: 14, scale: 0.96, duration: ds.durationBase, ease: ds.ease,
-        stagger: ds.durationFast,
-      }, els.title ? ">-0.1" : 0);
-    } else if (els.diagram) {
-      tl.from(els.diagram, { opacity: 0, scale: 0.96, duration: ds.slideEnter, ease: ds.ease }, els.title ? ">-0.1" : 0);
-    }
-  }
-
-  function closing(tl, ds, els) {
-    if (els.title) {
-      tl.from(els.title, { opacity: 0, y: 20, duration: ds.durationSlow, ease: ds.ease });
-      drawAccentLine(tl, ds, els.title, ">-0.08");
-    }
-    if (els.cta) {
-      tl.from(els.cta, { opacity: 0, y: 12, scale: 0.94, duration: ds.durationBase, ease: "back.out(1.4)" }, ">-0.05");
-    }
-  }
-
-  var TEMPLATES = {
-    title_reveal: titleReveal,
-    feature_callout: featureCallout,
-    stat_highlight: statHighlight,
-    diagram_build: diagramBuild,
-    closing: closing,
+  var DURATION_TOKENS = {
+    fast: "durationFast",
+    base: "durationBase",
+    slow: "durationSlow",
+    slide_enter: "slideEnter",
+    slide_exit: "slideExit",
   };
+
+  function resolveDurationToken(ds, token, fallback) {
+    if (token == null) return fallback;
+    var key = DURATION_TOKENS[token];
+    return key ? ds[key] : fallback;
+  }
+
+  function resolveRole(role, els) {
+    var keys = Array.isArray(role) ? role : [role];
+    for (var i = 0; i < keys.length; i++) {
+      var v = els[keys[i]];
+      if (Array.isArray(v)) {
+        if (v.length) return v;
+      } else if (v) {
+        return v;
+      }
+    }
+    // No candidate found - report back an empty list vs. null so callers
+    // can tell "role resolves to a list type but it's empty" apart from
+    // "role resolves to a single element and it's missing" if ever needed;
+    // both are treated as "skip this step" today.
+    return Array.isArray(els[keys[0]]) ? [] : null;
+  }
+
+  // Effect primitives - the only place actual GSAP tween code lives.
+  // Every template step names one of these by `effect`; new *effects*
+  // (as opposed to new *templates*) are the rare case that needs a JS
+  // change - see gsap_animation_authoring SKILL.md.
+  var EFFECTS = {
+    reveal: function (tl, ds, target, position, step) {
+      var params = step.params || {};
+      var vars = {
+        opacity: 0,
+        duration: resolveDurationToken(ds, step.duration, ds.durationBase),
+        ease: step.ease || ds.ease,
+      };
+      if (params.y !== undefined) vars.y = params.y;
+      if (params.x !== undefined) vars.x = params.x;
+      if (params.scale !== undefined) vars.scale = params.scale;
+      if (params.stagger !== undefined) {
+        vars.stagger = typeof params.stagger === "string"
+          ? resolveDurationToken(ds, params.stagger, ds.durationFast)
+          : params.stagger;
+      }
+      if (position === undefined || position === null) tl.from(target, vars);
+      else tl.from(target, vars, position);
+    },
+    accent_line: function (tl, ds, target, position) {
+      drawAccentLine(tl, ds, target, position);
+    },
+    count_up: function (tl, ds, target, position) {
+      animateCountUp(tl, ds, target, position);
+    },
+  };
+
+  // Plays one template's `steps` (from templates_config.js) into `tl`.
+  function runTemplateSteps(tl, ds, els, steps) {
+    var ranStepIds = {};
+    var anyStepRan = false;
+    for (var i = 0; i < steps.length; i++) {
+      var step = steps[i];
+      if (step.skip_if_ran && ranStepIds[step.skip_if_ran]) continue;
+
+      var target = resolveRole(step.role, els);
+      var isEmpty = target == null || (Array.isArray(target) && target.length === 0);
+      if (isEmpty) continue;
+      if (step.min_count && Array.isArray(target) && target.length < step.min_count) continue;
+
+      var effect = EFFECTS[step.effect];
+      if (!effect) {
+        // A config-level typo should fail loudly (console error -> capture
+        // step fails the render), not silently skip a beat - see
+        // gsap_animation_authoring SKILL.md's self-check.
+        throw new Error("Unknown animation effect in templates_config.js: " + step.effect);
+      }
+      var position = (!anyStepRan && step.position_if_first !== undefined) ? step.position_if_first : step.position;
+      effect(tl, ds, target, position, step);
+
+      if (step.id) ranStepIds[step.id] = true;
+      anyStepRan = true;
+    }
+  }
 
   function run() {
     var name = window.__ANIMATION_TEMPLATE__ || "feature_callout";
-    var build = TEMPLATES[name] || TEMPLATES.feature_callout;
+    var templates = window.__ANIMATION_TEMPLATES__ || {};
+    var steps = (templates[name] || templates.feature_callout || {}).steps || [];
     var ds = readTokens();
     var els = roleElements();
     var tl = gsap.timeline();
-    build(tl, ds, els);
+    runTemplateSteps(tl, ds, els, steps);
     // Deliberately no .clearProps()/.reverse() - the capture step relies on
     // the timeline holding its final state for the rest of the recording
     // (see gsap_animation_authoring SKILL.md).
