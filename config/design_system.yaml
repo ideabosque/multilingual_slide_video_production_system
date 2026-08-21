@@ -1,0 +1,100 @@
+# Design system tokens for the GSAP-animated marketing video pipeline
+# (see docs/marketing-animation-pipeline-plan.md §4.2).
+#
+# Source of truth: ideabosque.ai_website/app/app.css's `@theme`/`:root`
+# block, copied verbatim where it's a direct token (colors, fonts, radii,
+# spacing) and derived where app.css only has it embedded in per-component
+# rules (motion timing - see `motion:` below, extracted from the transition
+# durations/eases actually used throughout that file, not invented).
+#
+# This file is pure data - nothing in this pipeline reads it yet. It's the
+# concrete starting point for the GSAP timeline template system in Phase 1
+# of the plan, so slide animations look like they belong to the same brand
+# as ideabosque.ai_website rather than inventing a separate look.
+
+typography:
+  font_sans: "Inter, \"IBM Plex Sans\", \"Segoe UI\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif"
+  font_mono: "\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace"
+  # Reference type scale actually used in app.css (hero headline down to
+  # small print) - a slide's title/body/caption roles should map onto this
+  # scale rather than picking arbitrary sizes per deck.
+  scale:
+    hero_headline: 64px      # .hero-headline
+    section_heading: 40px    # .section-heading
+    subtitle: 22px           # .section-subtitle / .cap-card h3
+    lead: 20px               # .section-lead / .hero-sub
+    body: 18px                # body base font-size
+    small: 15px                # .cap-card p / .stack-item
+    label: 13px                 # .section-label / .hero-kicker (uppercase, letter-spacing 0.08em)
+
+color:
+  bg_page: "#F8F5EE"
+  bg_surface: "#FFFDF7"
+  bg_muted: "#EFE8DA"
+  text_primary: "#1F2523"
+  text_secondary: "#56605C"
+  text_inverse: "#FFFFFF"
+  brand_primary: "#0F4D4A"
+  brand_primary_hover: "#0B3F3C"
+  brand_forest: "#1E6B4F"
+  accent_signal: "#D87C2C"
+  accent_signal_soft: "#F3D8BE"
+  border_default: "#D8D0C2"
+  border_strong: "#9E9485"
+  focus: "#2D7FF9"
+  danger: "#C0392B"
+  success: "#1E6B4F"
+  # Two additional accent tones used ad hoc in app.css for
+  # labels/kickers/stat numbers (not in the formal @theme block, but
+  # consistently reused - #9E5519 appears 5+ times for the same role).
+  label_accent: "#9E5519"
+  hero_dark_bg_start: "#173f3b"   # .hero-visual gradient - dark-panel variant
+  hero_dark_bg_end: "#0a3b38"
+
+radius:
+  sm: 4px
+  md: 8px
+  # Resolved (plan Phase 1): app.css's @theme block extends rather than
+  # replaces Tailwind v4's default theme (no `@theme inline` / reset
+  # directive present), so an unset --radius-lg falls through to
+  # Tailwind v4's own built-in default of 0.5rem. Documented here as an
+  # inferred value, not one read from a live computed-style inspection of
+  # the actual site - revisit if that's ever verified and differs.
+  lg: 8px
+
+spacing:
+  "1": 4px
+  "2": 8px
+  "3": 12px
+  "4": 16px
+  "5": 24px
+  "6": 32px
+  "7": 48px
+  "8": 72px
+  "9": 112px
+  "10": 144px
+
+layout:
+  max_width: 1180px
+  copy_width: 760px
+  narrow_width: 640px
+
+motion:
+  # Not present as explicit tokens in app.css - derived from the actual
+  # transition-duration/easing values used throughout it, which are
+  # consistent enough to read as an intentional (if informal) system:
+  # ~120ms for immediate feedback, ~160ms for the majority of hover/focus
+  # transitions, ~200ms for larger surface changes (cards). All easings in
+  # app.css are plain `ease-out`, no springs/bounces anywhere on the site -
+  # GSAP timelines built from this system should default to ease-out too
+  # rather than introducing bounce/elastic eases the rest of the brand
+  # never uses.
+  duration_fast_ms: 120     # active/pressed states (.btn-primary:active, menu item hover)
+  duration_base_ms: 160     # the majority of hover/focus transitions (links, buttons, nav)
+  duration_slow_ms: 200     # larger surface changes (.cap-card, .industry-card hover)
+  easing_default: "ease-out"
+  # Slide-level animation beats (not derived from app.css, which has no
+  # video/slide precedent - these are new, proposed for Phase 1 review, not
+  # already-validated brand values like everything else in this file):
+  slide_enter_ms: 480       # proposed: title/element entrance, ~3x duration_slow_ms
+  slide_exit_ms: 320        # proposed: element exit, faster than entrance

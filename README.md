@@ -257,6 +257,7 @@ msv slides extract-text --deck-dir <path> --out state/<run_id>/analysis/slides/m
 msv slides render-images --deck-dir <path> --out <dir> [--viewport 1920x1080]
 msv slides apply-translations --deck-dir <original_deck_dir> --localization <localization_<lang>.json> --out <translated_<lang>_dir>
 msv slides validate --slide-analysis ... --localization ... --language ... [--manifest ...] [--project ...]
+msv slides generate-animation --deck-dir <original_deck_dir> --out state/<run_id>/analysis/slides/animation [--slide-analysis ...] [--spec ...]
 
 msv production render-slideshow --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> \
@@ -264,6 +265,11 @@ msv production render-slideshow --run-id ... --project-id ... --language ... \
     --localization state/<run_id>/analysis/localization_<language>.json \
     --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
 msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
+msv production render-marketing-animation --production output/<run_id>/<language>/production.json \
+    --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
+    --animation-dir state/<run_id>/analysis/slides/animation \
+    --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
+    [--localization ...] [--output-name marketing_animation.mp4]
 
 msv publishing validate --metadata ... --language ... [--video ...]
 msv publishing upload --run-id ... --project-id ... --language ... --video ... --metadata ... --output-dir ... [--existing-video-id ...]
@@ -279,6 +285,25 @@ deck and writing slide descriptions/narration/translations is Claude's
 job (see `.claude/skills/slide_deck_localization/SKILL.md`), not a
 deterministic script; the CLI only provides the extraction/rendering/
 validation tooling around that step.
+
+`generate-animation`/`render-marketing-animation` produce an optional,
+untracked side artifact (`marketing_animation.mp4`) — a GSAP-animated
+motion-graphics rebuild of an already-produced language, never a
+replacement for `slideshow.mp4` and never part of the tracked pipeline
+stages. Each slide gets one of five shot templates — `title_reveal`,
+`feature_callout`, `stat_highlight` (real number count-up), `diagram_build`
+(staggered per-card reveal), `closing` — picked by a deterministic
+heuristic (position + keyword match on the slide's description), or by an
+optional `visual_role` field Agent 1 can assign per slide in
+`slide_analysis.json` (takes priority over the heuristic when present).
+Both are a fixed, hand-written template library, not agent-generated code
+per deck — see `docs/marketing-animation-pipeline-plan.md` §4.1 for why,
+and `.claude/skills/gsap_animation_authoring/SKILL.md` /
+`.claude/skills/motion_design_principles/SKILL.md` for the "how"/"which
+template" guidance that applies only when someone extends the library
+itself, not on a normal render. See
+`.claude/skills/slideshow_video_production/SKILL.md`'s "Optional alternate
+output" for the full command sequence.
 
 ## Architecture
 
@@ -381,7 +406,8 @@ project-wide setup and configuration.
 ```
 .claude/
   agents/          # 5 subagent definitions (Task-tool invocable)
-  skills/          # 5 SKILL.md files, one per agent
+  skills/          # 7 SKILL.md files: one per agent, plus gsap_animation_authoring
+                    # and motion_design_principles (animation authoring guidance)
 src/multilingual_slide_video_agent/
   config.py        # .env + config/*.yaml + cwd-relative dir resolution
   state.py          # PipelineState — resume/retry backbone
@@ -389,11 +415,17 @@ src/multilingual_slide_video_agent/
   terminology.py      # preserve/forbidden-term checks
   logging_utils.py     # secret-redacting structured logging
   media.py            # ffprobe helper
-  slides/            # text extraction, node-ID translation application, Chromium rendering
+  slides/            # text extraction, node-ID translation application, Chromium rendering,
+                      # + generate_animation.py/animation_templates.py/design_system.py
+                      # (GSAP animation bundle generation — see docs/marketing-animation-pipeline-plan.md)
+    assets/            # animation_runtime.js (the actual GSAP timelines)
+    vendor/            # vendored gsap.min.js (see its GSAP_LICENSE.txt)
   production/         # TTS + slideshow assembly (captions/title-card styling)
+                      # + render_marketing_animation.py (optional GSAP-animated side artifact)
   publishing/         # YouTube upload (same shape as the video-source project)
   cli.py            # the `msv` command groups
-config/            # languages.yaml, terminology.yaml, video.yaml
+config/            # languages.yaml, terminology.yaml, video.yaml, design_system.yaml
+docs/              # marketing-animation-pipeline-plan.md
 output/ state/ logs/   # runtime data (git-ignored except .gitkeep)
 tests/             # pytest unit tests
 ```

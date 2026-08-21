@@ -120,10 +120,25 @@ state/<run_id>/analysis/
   "slides": [
     {"slide_index": 1, "slide_id": "slide_001",
      "slide_description": "Title slide introducing the product.",
-     "terminology": ["IdeaBosque"]}
+     "terminology": ["IdeaBosque"],
+     "visual_role": "title_reveal"}
   ]
 }
 ```
+`visual_role` is optional but recommended — one of `title_reveal` /
+`feature_callout` / `stat_highlight` / `diagram_build` / `closing`
+(`.claude/skills/motion_design_principles/SKILL.md`'s role table has the
+full description of each). It's consumed only by the separate, optional
+GSAP marketing-animation pipeline
+(`slideshow_video_production/SKILL.md`'s "Optional alternate output") to
+pick that slide's shot template — it has no effect on the core
+slideshow/translation/publishing pipeline, and omitting it is fine (a
+deterministic position+keyword heuristic covers slides without it). Assign
+it using the same judgment already going into `slide_description` — this
+is not extra research, just one more label on a slide you're already
+describing. Get it wrong and the animation pipeline just falls back to
+the heuristic; get the *slide_id*/*slide_index* wrong instead and node-ID
+translation breaks, which is the actual thing to be careful about here.
 
 `localization_<language>.json` (the Agent 2 handoff contract, README
 section 3). Note `title` at the top level, `slide_translations` keyed by
@@ -194,7 +209,10 @@ narration tone should match what's declared there), `config/terminology.yaml`
 2. `msv slides render-images` the source deck into
    `state/<run_id>/analysis/slides/source_images/`.
 3. Read the manifest and rendered screenshots and write
-   `slide_analysis.json`: describe each slide, tag terminology.
+   `slide_analysis.json`: describe each slide, tag terminology, and assign
+   each slide a `visual_role` (see "Generated outputs" above — optional
+   but recommended, five minutes of extra judgment while the slide's
+   already being described).
 4. For each target language, write `localization_<language>.json`:
    - a short, localized marketing `title` for the whole deck;
    - per slide, a **narration** passage in a confident marketing

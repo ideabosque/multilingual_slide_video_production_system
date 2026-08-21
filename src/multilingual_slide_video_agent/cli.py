@@ -18,6 +18,7 @@ import functools
 import json
 import sys
 import time
+from pathlib import Path
 
 import click
 
@@ -131,6 +132,30 @@ def slides_validate(slide_analysis: str | None, localization: str | None, langua
     )
 
 
+@slides.command("generate-animation")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The original clean source deck")
+@click.option("--out", required=True, type=click.Path())
+@click.option("--slide-analysis", type=click.Path(exists=True), help="slide_analysis.json, improves template selection via slide descriptions")
+@click.option("--spec", "spec_path", type=click.Path(exists=True), help="Optional explicit slide_id -> template_name JSON override; default is the built-in role heuristic")
+def slides_generate_animation(deck_dir: str, out: str, slide_analysis: str | None, spec_path: str | None) -> None:
+    """Generate one deck's GSAP animation bundle, once (marketing_animation_pipeline_plan §4.1)."""
+    from multilingual_slide_video_agent.slides.generate_animation import (
+        GenerateAnimationError,
+        generate_deck_animation,
+    )
+
+    spec_override = json.loads(Path(spec_path).read_text(encoding="utf-8")) if spec_path else None
+    try:
+        manifest = generate_deck_animation(
+            deck_dir=deck_dir, out_dir=out, slide_analysis_path=slide_analysis, spec_override=spec_override,
+        )
+    except GenerateAnimationError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    manifest["ok"] = True
+    click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+
 # ---------------------------------------------------------------------------
 # msv production ... (Agent 2)
 # ---------------------------------------------------------------------------
@@ -179,6 +204,38 @@ def production_validate(production_path: str, localization: str | None, run_id: 
     from multilingual_slide_video_agent.production.validate import validate_production
 
     _echo_result(validate_production(production_path=production_path, localization_path=localization, run_id=run_id))
+
+
+@production.command("render-marketing-animation")
+@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
+@click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
+@click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
+@click.option("--slides-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's rendered slide images, for the title card background (msv slides render-images output)")
+@click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
+@click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
+@click.option("--output-name", default="marketing_animation.mp4", show_default=True)
+@click.option("--viewport", default="1920x1080", show_default=True)
+def production_render_marketing_animation(
+    production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str,
+    localization: str | None, output_dir: str | None, output_name: str, viewport: str,
+) -> None:
+    """Rebuild an already-rendered language as a GSAP-animated marketing MP4 (marketing_animation_pipeline_plan §4)."""
+    from multilingual_slide_video_agent.production.render_marketing_animation import (
+        MarketingAnimationError,
+        render_marketing_animation,
+    )
+
+    try:
+        envelope = render_marketing_animation(
+            production_path=production_path, translated_deck_dir=translated_deck_dir,
+            animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization,
+            output_dir=output_dir, output_name=output_name, viewport=viewport,
+        )
+    except MarketingAnimationError as e:
+        _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
+        return
+    envelope["ok"] = envelope.get("status") == "completed"
+    _echo_result(envelope)
 
 
 # ---------------------------------------------------------------------------
