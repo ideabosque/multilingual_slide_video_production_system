@@ -253,6 +253,45 @@ terms, pronunciation hints).
   a retry after a transient TTS/ffmpeg failure reuses whatever already
   exists rather than regenerating everything.
 
+## Optional alternate output: GSAP-animated marketing video
+
+Separate from everything above and **not part of the tracked pipeline
+stages** (`translation`/`rendering`/`tts`/`validation`/`publishing`) — see
+`docs/marketing-animation-pipeline-plan.md` for the full design. Only
+triggered when the user explicitly asks for an animated/motion-graphics
+version of an already-rendered language, never automatically. Two steps:
+
+1. **`msv slides generate-animation --deck-dir <original_deck> --out state/<run_id>/analysis/slides/animation/ [--slide-analysis ...]`**
+   (usually run once, alongside Agent 1's `slide_analysis.json`, not
+   per-language) — assigns each slide a named GSAP shot template
+   (`title_reveal`/`feature_callout`/`stat_highlight`/`diagram_build`/`closing`,
+   see `.claude/skills/motion_design_principles/SKILL.md`'s role table)
+   and writes the reusable animation bundle (GSAP itself, the shared
+   `animation_runtime.js`, and `config/design_system.yaml`'s tokens as CSS
+   custom properties). This step targets the **original** deck's
+   structure, not any one language's translation, so it never needs
+   re-running per language and rarely needs re-running per run.
+2. **`msv production render-marketing-animation --production <production.json> --translated-deck-dir <translated_<lang>/> --animation-dir <animation bundle> --slides-dir <rendered_<lang>/> [--localization ...] [--output-name marketing_animation.mp4]`**
+   — requires that language's `production.json` to already exist (this
+   stays sequentially dependent on `render-slideshow` having already run,
+   reusing its narration audio and `segment_timing` rather than
+   regenerating TTS or re-deciding pacing). Injects the animation bundle
+   into that language's already-translated deck, captures each slide as a
+   short video clip via Playwright's native video recording (each
+   template's entrance animation plays once, then holds its final state
+   for the rest of that slide's narration-driven duration — see
+   `.claude/skills/gsap_animation_authoring/SKILL.md`), muxes each clip
+   with its own narration segment and caption, and concatenates the whole
+   sequence (title card first, held on slide 1's static rendered image
+   with the burned-in Title caption style, same as the non-animated
+   title card) into one MP4.
+
+A browser console error during capture (a bug in the generated animation)
+fails the whole render loudly, naming the slide — this is deliberately not
+a soft warning, since a silently-broken animation (e.g. a selector that
+never matches) wouldn't be visible from the output file itself without
+frame-by-frame review.
+
 ## Handoff contract
 
 On success, emits:

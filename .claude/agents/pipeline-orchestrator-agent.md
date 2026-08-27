@@ -62,3 +62,14 @@ short:
 
 Always finish by reporting `msv pipeline report`'s per-language status,
 never a single collapsed pass/fail for the whole run.
+
+If the user asks for an "animated marketing video", "GSAP version", or
+"motion graphics cut" of an already-produced language, dispatch
+**slideshow-production-agent** for that one language (see
+`slideshow_video_production/SKILL.md`'s "Optional alternate output"). This
+is an untracked side artifact, not a pipeline stage — it requires that
+language's `translation`/`rendering`/`tts`/`validation` stages already be
+`completed` (fail clearly, don't dispatch, if they aren't), but producing
+it never touches `msv pipeline set-stage`, never requires
+`approve-production`, and never implies anything about `slideshow.mp4` or
+publishing for that language.

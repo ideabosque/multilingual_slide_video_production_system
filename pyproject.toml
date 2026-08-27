@@ -33,5 +33,8 @@ msv = "multilingual_slide_video_agent.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+multilingual_slide_video_agent = ["slides/assets/*", "slides/vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

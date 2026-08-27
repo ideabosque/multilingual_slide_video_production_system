@@ -1,0 +1,14 @@
+GSAP (GreenSock Animation Platform) is vendored here from the official npm
+package `gsap@3.15.0` (https://www.npmjs.com/package/gsap), fetched via
+`npm pack gsap` during development.
+
+Per gsap's package.json: "Standard 'no charge' license:
+https://gsap.com/standard-license." — GSAP and all of its plugins became
+free for all use (including commercial) after Webflow's 2024 acquisition
+of GreenSock. See that URL for the full license text before redistributing
+this project.
+
+Only the core gsap.min.js build is vendored - no plugins (ScrollTrigger,
+Draggable, etc.) are used or included, per
+.claude/skills/gsap_animation_authoring/SKILL.md's rule against
+scroll/drag-dependent animation in a non-interactive video capture context.
