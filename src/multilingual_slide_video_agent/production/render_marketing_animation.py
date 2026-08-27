@@ -92,10 +92,20 @@ def _pad_or_trim_audio(src: Path | None, duration: float, dest: Path) -> None:
 def _mux_clip(
     video_path: Path, audio_src: Path | None, duration: float, caption_text: str | None,
     style: str, profile: dict, video_cfg: dict, resolution: dict, work_dir: Path, index: int,
+    video_lead_in: float = 0.0,
 ) -> Path:
     """One captured (silent) video clip + its own audio + its own caption,
     muxed and re-encoded to a consistent H.264/AAC format so the final
-    concat step can rely on every clip matching."""
+    concat step can rely on every clip matching.
+
+    `video_lead_in` (slides/render.py's `render_deck_animation_clips`)
+    skips the blank/white frames Playwright records before the page has
+    navigated and revealed itself - without this, that lead-in survives
+    into the final concatenated video as a visible white flash at every
+    slide boundary (see render.py's capture loop for the full
+    explanation). `-ss` before this input's `-i` seeks only the video
+    stream; the audio (already trimmed to `duration` on its own timeline)
+    is unaffected."""
     audio_path = work_dir / f"_clip{index:03d}_audio.m4a"
     _pad_or_trim_audio(audio_src, duration, audio_path)
 
@@ -110,7 +120,9 @@ def _mux_clip(
 
     dest = work_dir / f"_clip{index:03d}_muxed.mp4"
     cmd = [
-        "ffmpeg", "-y", "-i", str(video_path), "-i", str(audio_path),
+        "ffmpeg", "-y",
+        *(["-ss", f"{video_lead_in:.3f}"] if video_lead_in > 0 else []),
+        "-i", str(video_path), "-i", str(audio_path),
         "-map", "0:v", "-map", "1:a",
         "-vf", video_filter,
         "-c:v", render_cfg.get("video_codec", "libx264"),
@@ -246,6 +258,7 @@ def render_marketing_animation(
                    status="failed", errors=[str(e)])
         raise MarketingAnimationError(str(e)) from e
     clip_by_slide = {c["slide_id"]: Path(c["clip"]) for c in capture_manifest["clips"]}
+    lead_in_by_slide = {c["slide_id"]: c.get("video_lead_in_seconds", 0.0) for c in capture_manifest["clips"]}
 
     muxed_clips: list[Path] = []
     clip_index = 0
@@ -274,6 +287,7 @@ def render_marketing_animation(
         muxed = _mux_clip(
             video_path, audio_src if audio_src.exists() else None, duration,
             captions_by_slide_id.get(slide_id), "Default", profile, video_cfg, resolution, work_dir, clip_index,
+            video_lead_in=lead_in_by_slide.get(slide_id, 0.0),
         )
         muxed_clips.append(muxed)
         clip_index += 1

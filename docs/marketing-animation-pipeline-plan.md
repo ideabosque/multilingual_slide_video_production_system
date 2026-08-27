@@ -103,6 +103,31 @@ indistinguishable from the deck itself):
     already settled) and an accent line visibly drawn under a real
     headline.
 
+- **Second, distinct white-flash fix — inter-slide, not intra-slide.**
+  Found on a later deck (`loop-engineering-agent-runtime-middleware`,
+  12 slides), after the FOUC fix above was already in place: a white flash
+  still appeared *between* slides in the concatenated video, confirmed via
+  dense frame extraction right at a slide boundary (a blank white frame
+  sitting exactly at the `segment_timing` cut point, with the *next*
+  slide's caption already showing over it). Root cause is different from
+  the FOUC fix: `slides/render.py`'s `render_deck_animation_clips` starts
+  Playwright video recording at browser-context creation, which is
+  *before* `page.goto()` navigates — the blank `about:blank` tab (and, if
+  navigation is slow enough, part of the still-hidden page before our own
+  `html{visibility:hidden}` reveal) gets recorded as real leading frames
+  of the `.webm`, not something `wait_for_timeout` can skip. Concatenating
+  clips with that lead-in still attached puts a real blank segment at
+  every boundary. Fixed by measuring the lead-in per slide in wall-clock
+  time (bracketing context creation and a `page.wait_for_function(...
+  visibility === 'visible')` check, with a small safety margin subtracted
+  so measurement slop errs toward trimming too little rather than cutting
+  into real content) and trimming exactly that amount off the front of
+  each clip in `render_marketing_animation.py`'s `_mux_clip` (`-ss` before
+  that input, audio unaffected). Verified by re-rendering the real 12-slide
+  deck and re-extracting frames at the same boundary that showed the
+  flash — gone, next slide's mid-animation frame appears immediately after
+  the previous slide's last frame with no blank gap.
+
 **Decided:** `render_marketing_animation.py` is fully replaced (not kept as
 a selectable alternate style) by the GSAP+Playwright approach in §4, using
 a fixed template library selected per slide by a deterministic heuristic,

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,22 @@ def render_deck_animation_clips(
                 clip_tmp_dir = out_path / f"_{slide_id}_capture"
                 clip_tmp_dir.mkdir(parents=True, exist_ok=True)
 
+                # Playwright starts recording at context creation, but the
+                # page is blank (about:blank, renders white) until goto()
+                # navigates and paints - and even after that, our own
+                # html{visibility:hidden} (see _inject_animation_assets)
+                # keeps the page invisible until run()'s reveal line. Both
+                # phases are baked into the .webm as real leading frames,
+                # not something `wait_for_timeout` can skip - concatenating
+                # clips back-to-back with that lead-in still in them is
+                # what produces a visible white flash at every slide
+                # boundary (confirmed via frame extraction on the real
+                # deck's captured video, not just theoretical). We measure
+                # it here in wall-clock time and trim it in the mux step
+                # (render_marketing_animation.py's `_mux_clip`) instead of
+                # guessing a fixed padding, since navigation time varies
+                # per slide.
+                t_capture_start = time.perf_counter()
                 context = browser.new_context(
                     viewport={"width": width, "height": height},
                     record_video_dir=str(clip_tmp_dir),
@@ -196,6 +213,12 @@ def render_deck_animation_clips(
                 page.on("console", lambda msg: slide_errors.append(msg.text) if msg.type == "error" else None)
                 page.on("pageerror", lambda exc: slide_errors.append(str(exc)))
                 page.goto(slide_path.resolve().as_uri())
+                page.wait_for_function("document.documentElement.style.visibility === 'visible'", timeout=5000)
+                # Subtract a small safety margin so IPC/measurement slop
+                # biases toward trimming slightly too little (a few extra
+                # blank frames) rather than too much (cutting into real
+                # content) - erring the safe direction.
+                video_lead_in = max(0.0, (time.perf_counter() - t_capture_start) - 0.05)
                 page.wait_for_timeout(int(duration * 1000))
                 video = page.video
                 page.close()
@@ -208,7 +231,10 @@ def render_deck_animation_clips(
                 dest = out_path / f"{slide_id}.webm"
                 video.save_as(str(dest))
                 shutil.rmtree(clip_tmp_dir, ignore_errors=True)
-                clips.append({"slide_id": slide_id, "clip": str(dest), "duration_seconds": duration})
+                clips.append({
+                    "slide_id": slide_id, "clip": str(dest), "duration_seconds": duration,
+                    "video_lead_in_seconds": round(video_lead_in, 3),
+                })
         finally:
             browser.close()
 
