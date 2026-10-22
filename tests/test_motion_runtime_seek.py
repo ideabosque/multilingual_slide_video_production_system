@@ -84,9 +84,11 @@ def test_seek_mode_registers_paused_timeline_and_seeks_deterministically():
         # entrance and settle states differ (check-3's premise)
         assert json.loads(order_a[0])["title_op"] == "0"
         assert json.loads(order_a[2.0])["title_op"] == "1"
-        # count-up is seek-safe: value derived from playhead progress
+        # count-up is seek-safe: value derived from playhead progress, and
+        # t=0 shows the counter's start value on first visit too (the stat
+        # is still at opacity 0 there, so "0%" is never visible)
         assert json.loads(order_a[2.0])["stat"] == "40%"
-        assert json.loads(order_a[0])["stat"] == "40%"   # pre-first-update original text
+        assert json.loads(order_a[0])["stat"] == "0%"
         page.context.close()
 
 
@@ -130,6 +132,63 @@ def test_extract_roles_writes_localized_roles(tmp_path, monkeypatch):
     written = json.loads(roles_path.read_text(encoding="utf-8"))
     assert {s["slide_id"] for s in written["slides"]} == {"slide_001", "slide_002"}
     assert written["slides"][0]["template"]  # template recorded from spec.json
+    # The seek-mode injection happens in a temporary copy: the translated
+    # deck must not be left frozen at its animation start state.
+    for slide in deck.glob("slide_*.html"):
+        assert "ANIMATION-OVERRIDE" not in slide.read_text(encoding="utf-8")
+    assert not (deck / "animation_runtime.js").exists()
+
+
+COUNT_UP_TEMPLATE = {"stat_highlight": {"steps": [
+    {"id": "stat", "role": "stat", "effect": "count_up", "position": 0},
+]}}
+
+
+def _count_up_texts(stat_text, times):
+    from playwright.sync_api import sync_playwright
+
+    html = f"<!DOCTYPE html><html><body><h1>Big number</h1><div class='stat'>{stat_text}</div></body></html>"
+    inline = (
+        f"window.__ANIMATION_TEMPLATES__ = {json.dumps(COUNT_UP_TEMPLATE)};"
+        'window.__ANIMATION_TEMPLATE__ = "stat_highlight";'
+        f'window.__MOTION_MODE__ = "seek"; window.__ANIMATION_SLIDE_ID__ = "{SLIDE_ID}";'
+    )
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.set_content(html)
+            page.add_script_tag(content=inline)
+            page.add_script_tag(path=str(GSAP))
+            page.add_script_tag(path=str(RUNTIME))
+            page.wait_for_function("document.documentElement.style.visibility === 'visible'")
+            return [
+                page.evaluate(
+                    f"() => {{ window.__timelines['{SLIDE_ID}'].seek({t}); "
+                    "return document.querySelector('.stat').textContent; }"
+                )
+                for t in times
+            ]
+        finally:
+            browser.close()
+
+
+def test_count_up_actually_counts_mid_animation():
+    """The start/end text equals the source text either way, so only a
+    mid-tween seek proves the number really counts up."""
+    start, mid, end = _count_up_texts("40%", (0.0, 0.15, 5.0))
+    assert end == "40%"
+    assert mid != "40%"
+    assert mid.endswith("%") and 0 < int(mid[:-1]) < 40
+
+
+def test_count_up_keeps_prefix_suffix_and_source_decimals():
+    mid, end = _count_up_texts("$1.50M saved", (0.15, 5.0))
+    assert end == "$1.50M saved"            # "1.50", not "1.5"
+    assert mid != end                       # it really is mid-count
+    number = mid[1:-len("M saved")]
+    assert mid.startswith("$") and mid.endswith("M saved")
+    assert len(number.split(".")[1]) == 2 and 0 < float(number) < 1.5
 
 
 def test_capture_fails_loudly_on_a_broken_template(tmp_path):
@@ -163,3 +222,68 @@ def test_capture_fails_loudly_on_a_broken_template(tmp_path):
             translated_deck_dir=deck, animation_dir=anim,
             out_dir=tmp_path / "captures", durations_by_slide_id={"slide_001": 1.0},
         )
+
+def _seek_page(html, template, times, snap_js):
+    """Load `html` with the runtime in seek mode and return snap_js's value
+    at each seek time."""
+    from playwright.sync_api import sync_playwright
+
+    inline = (
+        f"window.__ANIMATION_TEMPLATES__ = {json.dumps(template)};"
+        f'window.__ANIMATION_TEMPLATE__ = "{next(iter(template))}";'
+        f'window.__MOTION_MODE__ = "seek"; window.__ANIMATION_SLIDE_ID__ = "{SLIDE_ID}";'
+    )
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            page.set_content(html)
+            page.add_script_tag(content=inline)
+            page.add_script_tag(path=str(GSAP))
+            page.add_script_tag(path=str(RUNTIME))
+            page.wait_for_function("document.documentElement.style.visibility === 'visible'")
+            return [
+                page.evaluate(f"() => {{ window.__timelines['{SLIDE_ID}'].seek({t}); return ({snap_js})(); }}")
+                for t in times
+            ]
+        finally:
+            browser.close()
+
+
+# Markup patterns from a real deck (run-20260911-002 slides 5, 7, 10), where
+# the old role selectors resolved nothing and the slides didn't animate.
+REAL_STAT_SLIDE = (
+    "<!DOCTYPE html><html><body><section class='slide'>"
+    "<p class='eyebrow'>Board-level risk signal</p>"
+    "<div class='stat-num'>60<span class='unit'>%</span></div>"
+    "<p class='stat-caption'>target spoilage-cost reduction</p>"
+    "</section></body></html>"
+)
+
+
+def test_stat_num_class_counts_up_and_keeps_its_unit_span():
+    snap = ("() => { const el = document.querySelector('.stat-num');"
+            " return {html: el.innerHTML, text: el.textContent}; }")
+    mid, end = _seek_page(REAL_STAT_SLIDE, COUNT_UP_TEMPLATE, (0.15, 5.0), snap)
+    assert end["html"] == '60<span class="unit">%</span>'   # markup unchanged once settled
+    assert mid["html"].endswith('<span class="unit">%</span>')
+    assert 0 < int(mid["text"][:-1]) < 60
+
+
+TITLE_TEMPLATE = {"title_reveal": {"steps": [
+    {"id": "hdr", "role": "title", "effect": "reveal", "position": 0},
+]}}
+TITLE_OPACITY = "() => [...document.querySelectorAll('h1, h2, h3')].map(h => getComputedStyle(h).opacity)"
+
+
+def test_title_falls_back_to_h3_when_a_slide_has_no_h1_or_h2():
+    html = ("<!DOCTYPE html><html><body><p class='eyebrow'>Shortage response</p>"
+            "<h3>Ask what is equivalent.</h3><h3>Contact five suppliers.</h3></body></html>")
+    (start,) = _seek_page(html, TITLE_TEMPLATE, (0,), TITLE_OPACITY)
+    assert start == ["0", "1"]          # the first h3 is the title; the second is untouched
+
+
+def test_h1_still_wins_over_an_earlier_h3():
+    html = "<!DOCTYPE html><html><body><h3>kicker</h3><h1>Real title</h1></body></html>"
+    (start,) = _seek_page(html, TITLE_TEMPLATE, (0,), TITLE_OPACITY)
+    assert start == ["1", "0"]          # [h3, h1] in document order: only the h1 animates

@@ -43,8 +43,12 @@
     };
   }
 
-  function pickEl(customClass, tagSelector) {
-    return document.querySelector(customClass) || document.querySelector(tagSelector);
+  // Tiers are tried in order and the first match wins, so a lower tier
+  // (e.g. h3 for the title) only applies when nothing above it exists -
+  // decks that already resolve keep resolving to the same element.
+  function pickEl(customClass, tagSelector, lastResort) {
+    return document.querySelector(customClass) || document.querySelector(tagSelector)
+      || (lastResort ? document.querySelector(lastResort) : null);
   }
 
   // Finds the largest group of >=2 direct siblings that share a class name,
@@ -84,11 +88,17 @@
 
   function roleElements() {
     return {
-      title: pickEl(".slide-title", "h1, h2"),
+      // h3 only when the slide has no h1/h2 (card-layout slides headline
+      // with h3 - run-20260911-002's slide_010 resolved no title at all).
+      title: pickEl(".slide-title", "h1, h2", "h3"),
       subtitle: pickEl(".slide-subtitle", "h1 + p, h2 + p, .subtitle"),
       body: pickAll(".slide-bullets li, .slide-body", "li, p"),
       diagram: pickEl(".slide-diagram", "svg, .diagram, img"),
-      stat: pickEl(".slide-stat, .slide-stat-number", "[data-stat], .stat"),
+      // Common big-number class names real decks use (`.stat-num` on
+      // run-20260911-002's slides 5 and 7 resolved no stat, so their
+      // stat_highlight template animated nothing).
+      stat: pickEl(".slide-stat, .slide-stat-number",
+                   "[data-stat], .stat, .stat-num, .stat-number, .stat-value, .metric-value"),
       cta: pickEl(".slide-cta", "a.btn, button, .cta"),
       // `.slide-diagram-node` is an explicit opt-in for a deck author who
       // wants to mark specific elements; pickAll's second tier
@@ -102,11 +112,17 @@
   // ---------- stat text parsing (shared by count_up and role extraction) ----------
   // Parses a leading/embedded numeric value out of an element's text
   // (handles "40%", "3x faster", "$1.2M saved", "99.9%"); null when the
-  // text has no number.
+  // text has no number. `decimals` comes from the source text, not the
+  // parsed float, so "1.50" keeps two decimals instead of becoming "1.5".
   function statParts(text) {
     var match = /^(\D*)([\d]+(?:\.[\d]+)?)(.*)$/.exec((text || "").trim());
     if (!match) return null;
-    return { prefix: match[1], value: parseFloat(match[2]), suffix: match[3] };
+    return {
+      prefix: match[1],
+      value: parseFloat(match[2]),
+      decimals: (match[2].split(".")[1] || "").length,
+      suffix: match[3],
+    };
   }
 
   // ---------- role extraction (B3 #2, `msv slides extract-roles`) ----------
@@ -170,34 +186,55 @@
     }
   }
 
+  // The first text node under `el` that contains a digit - the number to
+  // count. Writing only that node (not el.textContent) keeps styled child
+  // elements intact, e.g. `60<span class="unit">%</span>`.
+  function numberTextNode(el) {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (var node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (/\d/.test(node.nodeValue)) return node;
+    }
+    return null;
+  }
+
   // ---------- shared effect: animate a stat element's number counting up ----------
   // Tweens a counter from 0 to the parsed value (see statParts), preserving
-  // the original prefix/suffix text and decimal precision. Falls back to a
+  // the original prefix/suffix text, decimal precision and any styled child
+  // elements (only the digits' own text node is rewritten). Falls back to a
   // plain scale-in (no count-up) if no number is found - never leaves the
   // element blank.
   function animateCountUp(tl, ds, el, position) {
-    var match = statParts(el.textContent);
-    if (!match) {
+    var textNode = numberTextNode(el);
+    var stat = textNode ? statParts(textNode.nodeValue) : null;
+    if (!stat) {
       tl.from(el, { opacity: 0, scale: 0.86, duration: ds.durationSlow, ease: "back.out(1.2)" }, position);
       return;
     }
-    var prefix = match[1], target = match[2], suffix = match[3];
-    var decimals = (String(target).split(".")[1] || "").length;
-    var counter = { val: 0 };
-    tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);
-    // Seek-safety audit (plan B3's count_up caveat): `counter.val` is a
-    // tweened object property, so its displayed value is derived from the
-    // timeline's playhead progress on every update - never accumulated per
-    // tick and never wall-clock dependent. Seeking backwards or jumping
-    // ahead re-renders the correct number, asserted by the seek-mode
-    // determinism test (tests/test_motion_runtime_seek.py).
-    tl.to(counter, {
-      val: target,
-      duration: ds.slideEnter,
-      ease: "power2.out",
-      onUpdate: function () {
-        el.textContent = prefix + counter.val.toFixed(decimals) + suffix;
+    var prefix = stat.prefix, target = stat.value, suffix = stat.suffix, decimals = stat.decimals;
+    // Seek-safety (plan B3's count_up caveat): the text is written by the
+    // tweened property's own setter, not an onUpdate callback. GSAP's
+    // seek() suppresses callbacks by default, so a callback-driven counter
+    // never changes under a frame-seeking renderer; a property setter runs
+    // on every render, live or seeked. The value is derived from playhead
+    // progress (never accumulated per tick or read from the wall clock),
+    // so seeking backwards or jumping ahead shows the right number -
+    // asserted mid-tween by tests/test_motion_runtime_seek.py.
+    var current = 0;
+    var counter = {};
+    Object.defineProperty(counter, "val", {
+      get: function () { return current; },
+      set: function (v) {
+        current = v;
+        textNode.nodeValue = prefix + v.toFixed(decimals) + suffix;
       },
+    });
+    tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);
+    // fromTo renders its start value as soon as it's built (the element is
+    // still at opacity 0 then), so t=0 shows the same "0" on first visit as
+    // after seeking back - a plain .to() left the source text until the
+    // tween first rendered, which made t=0 depend on seek history.
+    tl.fromTo(counter, { val: 0 }, {
+      val: target, duration: ds.slideEnter, ease: "power2.out", immediateRender: true,
     }, position);
   }
 
@@ -312,7 +349,14 @@
     // and registered under the renderer-chosen slide id instead of played
     // live for wall-clock capture. Same construction path either way, so
     // what the seeked renderer draws is what the live engine played.
-    var tl = gsap.timeline(mode === "seek" ? { paused: true } : undefined);
+    // Live capture with a sentinel (window.__CAPTURE_SENTINEL_MS__, set
+    // only by slides/render.py's capture injection) also starts paused:
+    // the page shows a solid magenta overlay for that long before the
+    // timeline plays, so the recording carries an unambiguous "slide
+    // starts here" marker whatever the deck's own background colour is
+    // (playwright_engine.py's lead-in detection keys on it).
+    var sentinelMs = mode === "live" ? Number(window.__CAPTURE_SENTINEL_MS__ || 0) : 0;
+    var tl = gsap.timeline(mode === "seek" || sentinelMs > 0 ? { paused: true } : undefined);
     runTemplateSteps(tl, ds, els, steps);
     if (mode === "seek") {
       var slideId = window.__ANIMATION_SLIDE_ID__ || "slide";
@@ -332,7 +376,20 @@
     // to the animation's start a frame later - a visible white/default
     // flash at the start of every captured clip (confirmed in production
     // output, not just theoretical - see marketing_animation_pipeline_plan.md).
-    document.documentElement.style.visibility = "visible";
+    var reveal = function () {
+      document.documentElement.setAttribute("data-motion-revealed", "");
+      document.documentElement.style.visibility = "visible";
+      if (sentinelMs > 0) tl.play(0);
+    };
+    if (sentinelMs > 0) {
+      // Two frames first so the sentinel is actually painted (and
+      // recorded) before the hold starts counting.
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { setTimeout(reveal, sentinelMs); });
+      });
+    } else {
+      reveal();
+    }
   }
 
   if (document.readyState === "loading") {

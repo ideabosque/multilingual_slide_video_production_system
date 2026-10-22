@@ -42,18 +42,26 @@ def render_marketing_animation(
 ) -> dict:
     """The legacy entry point, now pinned to the `playwright` engine
     regardless of motion.yaml's default_engine (the alias's contract), and
-    pinned to the legacy `marketing_animation.mp4` default output name."""
-    envelope = render_motion(
-        production_path=production_path,
-        translated_deck_dir=translated_deck_dir,
-        animation_dir=animation_dir,
-        slides_dir=slides_dir,
-        localization_path=localization_path,
-        output_dir=output_dir,
-        output_name=output_name,
-        engine_name="playwright",
-        viewport=viewport,
-    )
+    pinned to the legacy `marketing_animation.mp4` default output name.
+    Any render failure is re-raised as MarketingAnimationError, so callers
+    written against the old API (`except MarketingAnimationError`) still
+    catch it."""
+    try:
+        envelope = render_motion(
+            production_path=production_path,
+            translated_deck_dir=translated_deck_dir,
+            animation_dir=animation_dir,
+            slides_dir=slides_dir,
+            localization_path=localization_path,
+            output_dir=output_dir,
+            output_name=output_name,
+            engine_name="playwright",
+            viewport=viewport,
+        )
+    except MarketingAnimationError:
+        raise
+    except MotionError as e:
+        raise MarketingAnimationError(str(e)) from e
     # Legacy manifest: the previous renderer wrote envelope["outputs"]'s
     # precursor `result` dict to marketing_animation.json at the same point.
     out_dir = Path(output_dir).resolve() if output_dir else Path(production_path).resolve().parent

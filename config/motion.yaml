@@ -17,6 +17,8 @@ encode:
   pix_fmt: yuv420p
 
 engines:
+  # Pinned in motion/package.json (0.8.140, plan B4 spike). Always run with
+  # HYPERFRAMES_NO_TELEMETRY=1 and DO_NOT_TRACK=1 - telemetry is on by default.
   hyperframes: { workers: auto, timeout_seconds: 1800 }   # read by Phase 2b's engine
   remotion: { concurrency: auto, timeout_seconds: 1800, composition_id: Slideshow }
 
@@ -29,9 +31,16 @@ validation:
   blank_max_stddev: 6.0
   blank_white_min_mean: 244
   blank_black_max_mean: 12
-  # B6 check 3 - slide frames at entrance (start + 1 frame) vs. settle
-  # (end - 1 frame) must differ by more than this mean grayscale delta, or the
-  # slide's animation "never visibly happened" (the failure mode the earlier
-  # plan identified as the worst one: selectors that silently resolve to
-  # nothing).
-  animation_min_mean_delta: 1.5
+  # A blank START frame is fine when it is just the slide's own background
+  # (every element still at opacity 0 - normal on a white deck): its mean
+  # must be within this many gray levels of the settled frame's median.
+  background_match_max_delta: 12
+  # B6 check 3 - each slide's own first (entrance) frame vs. its
+  # settled last frame: at least this fraction of pixels must change by more
+  # than animation_pixel_delta gray levels, or the slide's animation "never
+  # visibly happened" (the failure mode the earlier plan identified as the
+  # worst one: selectors that silently resolve to nothing). A changed-pixel
+  # fraction, not a whole-frame mean, so a small headline animating fully
+  # still counts while encoder noise (a few levels) never does.
+  animation_pixel_delta: 24
+  animation_min_changed_fraction: 0.0002   # settled-frame encoder noise measured at exactly 0; small-text fixture slides score ~0.0012+

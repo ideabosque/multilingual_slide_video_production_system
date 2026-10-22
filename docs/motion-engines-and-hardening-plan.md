@@ -1,13 +1,82 @@
 # Motion Engines (HyperFrames + Remotion) and Pipeline Hardening — Development Plan
 
-Status: **Phase 0 (Part A) implemented on branch `feature/phase0-hardening`;
-Phases 1–8 approved, not started.** **Phase 1 - engine seam - is now implemented on branch
-`feature/phase1-engine-seam` (committed on top of Phase 0: `production/motion/`,
-`render-motion` CLI + alias, seek mode, `extract-roles`, `motion.yaml`,
-`msv motion install/doctor`, B6 checks 1-4; tests 97 -> 114 all passing.
-Verified: Playwright native recording can yield entirely-blank webms on some
-environments; validation refuses loudly - see D1/B1; Phase 2a spike next.) Open decisions were accepted with their
-recommended defaults on 2026-10-13 (see "Open decisions").
+Status: **Phases 0 and 1 implemented** (Phase 0 committed on
+`feature/phase0-hardening`; Phase 1, the engine seam, on
+`feature/phase1-engine-seam`, including the review fixes below). **Phase 2a
+(HyperFrames spike) done; results are in B4.** Phases 2b–8 approved, not started. Open
+decisions were accepted with their recommended defaults on 2026-10-13 (see
+"Open decisions").
+
+What Phase 1 delivered: `production/motion/` (context, engine protocol,
+Playwright engine, shared post-pass, B6 checks 1–4), `msv production
+render-motion --engine …` plus the `render-marketing-animation` alias, seek
+mode in `animation_runtime.js`, `msv slides extract-roles`,
+`config/motion.yaml`, and `msv motion install`/`doctor` with a committed
+`motion/package-lock.json`. Tests: 97 → 127, all passing.
+
+Fixed after the Phase 1 code review (2026-10-22), where the build differs
+from the text below:
+
+- **Count-up:** it had stopped counting (it read the stat parser's result
+  as an array). In seek mode it also never updated, because GSAP's `seek()`
+  suppresses `onUpdate`. The text is now written by the tweened property's
+  setter, and t=0 is the same whatever the seek history. Tests seek
+  mid-tween.
+- **Per-slide validation:** checks 2 and 3 compared every slide with the
+  *video's* last frame, so only the last slide was really checked. They now
+  use each slide's own first and last frame. A blank start frame is
+  accepted when it is just the slide's own background (a white deck before
+  its fade-in). Check 3 measures the fraction of pixels that changed by
+  more than 24 levels, not a whole-frame mean, which shrinks with content
+  area. Settled-frame encoder noise was measured at exactly 0.
+- **Lead-in trim:** blank-frame detection couldn't tell a white deck's
+  first frames from `about:blank` and trimmed into the entrance. Live
+  capture now shows a 600ms magenta sentinel before the timeline plays (in a
+  scratch copy of the deck, never the translated deck). The trim keys on
+  the sentinel-to-content transition. If no sentinel was recorded, it trims
+  nothing. The probe decodes only the first `lead-in + 2s`, downscaled.
+- **Exact frame boundaries:** segments were encoded by seconds from a 25fps
+  webm, so they came out a frame short or long at random, and a
+  carry-forward pushed the error into the next slide. Segments are now
+  encoded to exact frame counts rounded from the absolute timeline
+  (`segment_frame_counts`). A wrong count fails loudly. With this and the
+  trim fix, the fixture deck went from about 50% to 20/20 clean renders
+  (dark and white) on this machine.
+- **Stale runtime from old bundles:** capture copied `animation_runtime.js`
+  from the run's animation bundle. On the first real-deck render
+  (`run-20260911-002`, bundle from September), that old runtime never cleared
+  the new sentinel, and validation refused every slide. Runtime code now
+  always comes from the installed package; bundles supply per-deck data
+  only.
+- **Dead role selectors on a real deck:** with the stale runtime fixed, the
+  same render was exact-length with no flash frames, but the per-slide
+  check refused 3 of 14 slides, correctly:
+  - slides 5 and 7 mark their big number `.stat-num` and have no `h1`/`h2`,
+    so `stat_highlight` resolved neither `stat` nor `title`;
+  - slide 10 headlines with `h3`.
+
+  The old whole-video comparison would have passed all three, so earlier
+  marketing videos likely had silently static slides. The fixes:
+  - `stat` also matches `.stat-num`, `.stat-number`, `.stat-value` and
+    `.metric-value`;
+  - `title` falls back to `h3` only when no `h1`/`h2` exists, so existing
+    decks resolve as before;
+  - `count_up` rewrites only the digits' text node, so styled children such
+    as `60<span class="unit">%</span>` survive.
+
+  Tests reproduce each pattern.
+- **Smaller fixes:**
+  - The manifest is `<output stem>.motion.json`, so engines no longer
+    overwrite each other's.
+  - `extract-roles` injects seek mode into a temporary copy.
+  - The legacy wrapper raises `MarketingAnimationError` again.
+  - `motion install` has a lockfile and explains a missing one.
+
+**Known limit:** Playwright's screencast delivers few frames during the
+first ~500ms of a slide, so live capture records only a few frames of each
+entrance animation. Validation catches it when nothing visibly changes.
+This is the live-capture weakness HyperFrames' frame-exact seeking is meant
+to remove (D1).
 
 What Phase 0 actually changed, where it differs from the text below:
 
@@ -284,7 +353,7 @@ design_system.yaml       ─┘                                                 
                                        shared post-pass (Python/ffmpeg): burn ASS captions + mux narration
                                                                                      │
                                                                                      ▼
-                                     output/<run>/<lang>/marketing_<engine>.mp4 + motion.json
+                                     output/<run>/<lang>/marketing_<engine>.mp4 + marketing_<engine>.motion.json
 ```
 
 New module `production/motion/`:
@@ -402,7 +471,7 @@ engines:
 - `render-marketing-animation` stays as an alias for
   `render-motion --engine playwright`, so existing skills and docs don't
   break.
-- Output is `marketing_<engine>.mp4` plus a `motion.json` manifest: engine,
+- Output is `marketing_<engine>.mp4` plus a `<output stem>.motion.json` manifest: engine,
   engine version, fps, per-slide timing, frame-check results, and duration
   drift.
 
@@ -422,56 +491,70 @@ Its composition format:
 
 Rendering uses `hyperframes render --output <file>`.
 
-**Build step (`hyperframes_engine.build_project`):**
+**Phase 2a spike results (2026-10-22, HyperFrames 0.8.140).** The spike
+ran on small hand-built test compositions outside the repo. Every finding
+below was observed, not taken from the docs.
 
-1. Copy the translated deck and the animation bundle (with
-   `__MOTION_MODE__="seek"` injected) into `work_dir/hf/`.
-2. Generate `index.html` containing one stage at the target resolution and
-   `fps`.
-3. Add a title clip: `data-start=0`, `data-duration=title_duration`, showing
-   slide 1's PNG.
-4. Add one clip per slide, with `data-start` and `data-duration` taken from
-   `segment_timing`. Each clip embeds that slide's translated markup, with the
-   slide's body scoped under a unique container so slide CSS doesn't collide.
-   Alternatively, if the spike (Phase 2a) confirms nested compositions
-   support it, each slide is referenced as its own sub-composition file. That
-   is preferred, because each slide's HTML stays untouched.
-5. Register one timeline per slide under `window.__timelines`. Each timeline
-   is offset to its clip's start, or registered per sub-composition, again
-   depending on the spike's finding.
-6. Add no `<audio>` elements, since the composition is silent by design (B2).
-7. Fonts: Chromium blocks `file://` `@font-face` loads (the existing reason
-   `cjk_fonts.py` exists). Reuse its approach of inlining or base64-embedding
-   the font, unless the spike shows HyperFrames serves the project directory
-   over HTTP, in which case relative font URLs work.
+| Question | Finding |
+|---|---|
+| Version and install | `hyperframes@0.8.140` pinned exact in `motion/package.json` and the lockfile. That is the newest release at least two weeks old; releases ship almost daily (539 versions, 0.8.186 on the day of the spike). It is Apache-2.0, from `heygen-com/hyperframes`, and has no install scripts. It uses `puppeteer-core` with a cached `chrome-headless-shell`, so Chrome is not bundled. `hyperframes doctor` passes for Node, FFmpeg, Chrome and Docker. |
+| Telemetry | **On by default.** It sends anonymous usage, linked to a HeyGen account if signed in. The engine must set `HYPERFRAMES_NO_TELEMETRY=1` and `DO_NOT_TRACK=1` on every call. The spike did this and left the user's global setting untouched. |
+| Render flags | `render [DIR] -o <file> -f <fps> -q draft\|looks\|delivery` (or `--crf`), `-w <n\|auto>`, `--resolution`, `--strict` (fail on lint errors), `--docker` (pinned Chrome and fonts for deterministic production renders), `--quiet`. |
+| Nested compositions | Each slide is its own file `compositions/<id>.html`: exactly one bare `<template>` whose root carries `data-composition-id="<id>"`. `index.html` mounts it with `<div class="clip" data-composition-id="<id>" data-composition-src="compositions/<id>.html" data-start=… data-duration=…>`. Every `<style>` and `<script>` must sit inside the template. |
+| CSS isolation | **Works**, including the selectors real decks use. Two slides styling `h1` differently stay separate. A slide's `body`, `html` and `:root` rules (backgrounds, inherited colour, CSS variables) are rewritten onto that slide's root and do not leak to other slides. `vw` units resolve against the composition size. One rule: style the template root via `#root`, never via a class on it. |
+| Scripts | **Not isolated.** Slides are cloned into one shared document, so a slide's script sees the whole page. Our runtime is a single page-wide IIFE that reads `window.__ANIMATION_TEMPLATE__` and `document.querySelectorAll`, so it needs a per-slide entry point scoped to that slide's root (see "Build step" below). |
+| Timelines | Paused GSAP timelines registered at `window.__timelines["<id>"]` are **local to the clip**: a fade at the clip's t=0.5 renders 0.5s after `data-start`. The setter-based `count_up` showed exactly 20% halfway through a 0→40 tween. The old `onUpdate` version would not have changed under seeking. |
+| Assets | Served **over HTTP** (`location.protocol` is `http:`), with the project root as the base URL. Paths must be root-relative (`assets/…`, not `../assets/…`; `lint` flags the latter). A local `@font-face` font and an `<img>` both load, so CJK fonts can ship as plain files under the project. The `file://` font workaround in `cjk_fonts.py` isn't needed here. |
+| Audio | A composition with no audio element produces **no audio stream at all**, only H.264 video. That fits B2: the shared post-pass muxes narration. |
+| JS errors | `lint` does **not** catch runtime errors (exit 0). `render` does fail (exit 1) and names the slide (`composition script error: slide_b ReferenceError …`), but only after waiting 45s for the timeline to register. `check` (which replaces the deprecated `validate`) reports the same error in seconds with exit 1. The engine runs `check` first, then `render`. |
+| Determinism | Two renders of the same project were **byte-identical**: all 180 decoded frames matched. |
+| Speed | 60s at 1080p30 (1800 frames, 20 sub-compositions) rendered in **30s** on this machine (3 auto workers, hardware-GPU capture, about 2× real time). Live Playwright capture can never beat 1×, since it records each slide as it plays. *Not yet measured on the 13-slide reference deck*; that needs Phase 2b's generator. |
 
-**Render:** `motion/node_modules/.bin/hyperframes render --output
-work_dir/silent.mp4` plus the fps, resolution and quality flags confirmed
-during the spike, with a timeout from `motion.yaml`. If HyperFrames exposes a
-lint or check command (its CLI skill lists `lint`/`check`), run it first and
-fail loudly on errors, matching the existing "fail on console error" rule.
+**Build step (`hyperframes_engine.build_project`), from the spike:**
 
-**What this removes:** the wall-clock capture, the
-`html{visibility:hidden}` reveal race, and the lead-in measurement and trim
-in `render.py`/`_mux_clip`. All three exist only because live recording isn't
-frame-addressable. They stay in the Playwright engine for as long as that
-engine exists.
+1. **Project layout** in `work_dir/hf/`:
+   - `index.html`: a root of `data-width`/`data-height` at the target
+     resolution, a black base background, GSAP loaded once, and an empty
+     paused `root` timeline;
+   - `compositions/title.html` and `compositions/<slide_id>.html`;
+   - `assets/`: the translated deck's assets, copied root-relative.
+2. **Title clip:** a template showing `slide_001.png` full-bleed, with
+   `data-start` 0 and the title duration. It is static, matching the other
+   engines.
+3. **One sub-composition per slide**, converted from the translated slide's
+   full HTML document:
+   - its head `<style>` blocks and stylesheet links (paths rewritten
+     root-relative) move inside the `<template>`;
+   - its body children go under `<div id="root" data-composition-id="<slide_id>">`;
+   - `body`, `html` and `:root` rules can stay as they are, since the spike
+     showed HyperFrames scopes them;
+   - prefix authored ids with `<slide_id>-` if two slides could collide.
+4. **Clip timing:** `data-start` and `data-duration` come from
+   `segment_timing`, using the same whole-frame rounding as
+   `segment_frame_counts`, so slide boundaries match the Playwright engine
+   frame for frame.
+5. **Animation:** split `animation_runtime.js` into a pure library plus a
+   per-slide entry point, `window.__motionRunSlide(rootEl, {template, slideId,
+   mode})`. Role resolution queries `rootEl`, not `document`. In
+   `mode: "seek"` it registers `window.__timelines[slideId]` and leaves page
+   visibility alone. Each slide template's inline script calls it for its own
+   root.
+   - The live Playwright path keeps working by calling the same entry point
+     with `document.documentElement`.
+   - The seek-determinism test then also covers the HyperFrames path.
+6. **No `<audio>`** (B2).
+7. **Render:** with `HYPERFRAMES_NO_TELEMETRY=1` and `DO_NOT_TRACK=1` set,
+   run `hyperframes check work_dir/hf`, then `hyperframes render work_dir/hf -o
+   silent.mp4 -f <fps> --crf <crf> -w <workers> --strict --quiet`, with
+   timeouts from `motion.yaml`. Any non-zero exit fails loudly with its output.
+   Record `hyperframes --version` in the motion manifest.
+8. **Docker** (`--docker`) is an option for production renders, as it pins
+   Chrome and fonts; the default stays local. Revisit in Phase 7.
 
-**Phase 2a spike (do first, about 1 day).** The HyperFrames docs available
-when this plan was written did not state the following, so they are verified
-against the pinned version before the build step is finalized:
-
-- the exact render flags (fps, resolution, CRF/quality, worker count);
-- the nested sub-composition syntax, and whether per-slide CSS isolation
-  works;
-- whether assets are served over HTTP or `file://` (affects fonts and SVG
-  `<use>` references);
-- whether a composition with no audio renders a silent track or no audio
-  stream;
-- how it reports JS errors (exit code versus log only);
-- render speed on the 13-slide reference deck.
-
-Record the answers in this document, replacing this list.
+**What this removes:** the wall-clock capture, the capture sentinel, the
+`html{visibility:hidden}` reveal and the lead-in detection and trim. All of
+them exist only because live recording isn't frame-addressable. They stay in
+the Playwright engine for as long as that engine exists.
 
 ### B5. Remotion engine
 
@@ -546,7 +629,7 @@ also never the `default_engine` unless that is decided explicitly.
 ### B6. Validation (all engines)
 
 `production/motion/validate.py`, run automatically after every
-`render-motion`, writes its results into `motion.json`:
+`render-motion`, writes its results into the `.motion.json` manifest:
 
 1. **Duration:** the silent video's duration equals `total_duration` within
    one frame, and the final video's within the existing

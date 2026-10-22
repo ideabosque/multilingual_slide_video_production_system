@@ -10,14 +10,16 @@ Checks:
 1. **Duration** - the silent video's duration equals `ctx.total_duration`
    within one frame (the engine's own contract, re-verified here), and the
    final video's within `sync.max_duration_drift_seconds`.
-2. **No blank boundary frames** - frames at each slide's start + 1 frame
-   and end - 1 frame; a near-uniform white or black frame (mean + stddev
-   pair) fails, naming the slide. Guards both regression classes of the
-   flash bugs documented in the earlier plan (intra-slide FOUC and the
-   inter-slide blank lead-in). Runs on the *silent* video, so cue/burn-in
-   content can't mask a blank background.
-3. **Animation actually happened** - the frames at the slide's entrance and
-   settle must differ by more than a threshold. Catches selectors that
+2. **No flash frames at boundaries** - each slide's OWN first and last
+   frame. A surviving magenta capture sentinel
+   always fails; a near-uniform white/black frame fails, naming the slide,
+   unless it's a start frame that simply matches the slide's own background
+   (a white deck before its elements fade in). Guards both regression
+   classes of the flash bugs documented in the earlier plan (intra-slide
+   FOUC and the inter-slide blank lead-in). Runs on the *silent* video, so
+   cue/burn-in content can't mask a blank background.
+3. **Animation actually happened** - each slide's own first and last
+   frames must differ by more than a threshold. Catches selectors that
    silently resolve to nothing (the runtime skips an unresolved beat rather
    than throwing - by design - so nothing else would catch it). Also from
    the silent video.
@@ -48,10 +50,23 @@ def _gray_array(png_path: Path) -> numpy.ndarray:
 
 
 def frame_stats(png_path: Path) -> dict[str, float]:
-    """A frame's grayscale mean/stddev - the B6 check-2 pair. Exposed for
-    unit tests (and `motion doctor` diagnostics later)."""
+    """A frame's grayscale mean/stddev/median - the B6 check-2 inputs. The
+    median approximates the slide's background (most pixels are
+    background). Exposed for unit tests (and `motion doctor` diagnostics
+    later)."""
     arr = _gray_array(png_path)
-    return {"mean": float(arr.mean()), "stddev": float(arr.std())}
+    return {"mean": float(arr.mean()), "stddev": float(arr.std()), "median": float(numpy.median(arr))}
+
+
+def is_sentinel_frame(png_path: Path) -> bool:
+    """Whether a frame is the live-capture magenta sentinel
+    (slides/render.py's SENTINEL_RGB). Used both to find where captured
+    content starts and to fail a render where a sentinel frame survived the
+    trim - it would be a visible magenta flash."""
+    with Image.open(png_path) as im:
+        rgb = numpy.asarray(im.convert("RGB"), dtype=numpy.float32)
+    r, g, b = (float(rgb[..., c].mean()) for c in range(3))
+    return r >= 200 and b >= 200 and g <= 60
 
 
 def frame_delta(png_a: Path, png_b: Path) -> float:
@@ -60,6 +75,18 @@ def frame_delta(png_a: Path, png_b: Path) -> float:
     if a.shape != b.shape:
         raise MotionError(f"frame sizes differ, cannot compare: {png_a} {a.shape} vs {png_b} {b.shape}")
     return float(numpy.abs(a - b).mean())
+
+
+def frame_changed_fraction(png_a: Path, png_b: Path, pixel_delta: float) -> float:
+    """Fraction of pixels whose grayscale value differs by more than
+    `pixel_delta` between two frames - B6 check 3's signal. Unlike a
+    whole-frame mean, this doesn't shrink with how much of the frame the
+    animated content covers: a small headline fading in fully is a real
+    animation, while encoder noise only moves pixels by a few levels."""
+    a, b = _gray_array(png_a), _gray_array(png_b)
+    if a.shape != b.shape:
+        raise MotionError(f"frame sizes differ, cannot compare: {png_a} {a.shape} vs {png_b} {b.shape}")
+    return float((numpy.abs(a - b) > pixel_delta).mean())
 
 
 def _require_frame(png_path: Path, context: str) -> None:
@@ -122,7 +149,9 @@ def validate_motion(
         "blank_max_stddev": 6.0,
         "blank_white_min_mean": 244.0,
         "blank_black_max_mean": 12.0,
-        "animation_min_mean_delta": 1.5,
+        "animation_pixel_delta": 24,
+        "animation_min_changed_fraction": 0.0002,
+        "background_match_max_delta": 12.0,
     }, **(ctx.motion_config.get("validation", {}) or {})}
     one_frame = 1.0 / ctx.fps
     frames_dir = work_dir / "validation_frames"
@@ -151,67 +180,84 @@ def validate_motion(
             f"{final_drift:.3f}s > sync.max_duration_drift_seconds={ctx.max_duration_drift_seconds}"
         )
 
-    # --- 2. no blank frames at boundaries (on the silent video) ------------
+    # --- 2 + 3. per-slide boundary frames (on the silent video) -------------
+    # Each slide's own first and last frame. Engines cut slides on whole
+    # frames rounded from the absolute timeline (round(t * fps), see
+    # playwright_engine.segment_frame_counts), so those frame indices are
+    # known exactly; `-ss` outputs the first frame at or after the seek
+    # point, hence the tiny epsilon below each frame's timestamp. Only the
+    # video's very last slide uses -sseof for its end, because seeking that
+    # close to the end of the file can decode nothing.
     boundary_checks: list[dict[str, Any]] = []
+    animation_checks: list[dict[str, Any]] = []
+    last_frame_index = round(ctx.total_duration * ctx.fps) - 1
+    epsilon = one_frame / 100
     for slide in ctx.slides:
-        png = frames_dir / f"boundary_{slide.slide_id}_start.png"
-        extract_frame(silent_video, slide.start + one_frame, png)
-        stats = frame_stats(png)
-        blank = is_blank_frame(stats, thresholds)
-        record = {"slide_id": slide.slide_id, "boundary": "start",
-                  "at_seconds": round(slide.start + one_frame, 4), **stats}
-        if blank:
-            record["ok"] = False
+        start_png = frames_dir / f"boundary_{slide.slide_id}_start.png"
+        end_png = frames_dir / f"boundary_{slide.slide_id}_end.png"
+        first_frame = round(slide.start * ctx.fps)
+        end_frame = round(slide.end * ctx.fps) - 1
+        start_at = first_frame / ctx.fps
+        end_at = end_frame / ctx.fps
+        extract_frame(silent_video, max(0.0, start_at - epsilon), start_png)
+        if end_frame >= last_frame_index:
+            extract_last_frame(silent_video, end_png)
         else:
-            record["ok"] = True
-        boundary_checks.append(record)
-        if blank:
-            errors.append(
-                f"blank {stats['mean']:.0f}-mean/({stats['stddev']:.1f}-stddev) frame at slide "
-                f"'{slide.slide_id}''s start boundary (t={slide.start + one_frame:.3f}s) - the "
-                "flash-bug regression classes from the earlier plan"
+            extract_frame(silent_video, end_at - epsilon, end_png)
+        start_stats, end_stats = frame_stats(start_png), frame_stats(end_png)
+
+        # Check 2: a surviving capture sentinel is always a flash. A blank
+        # (near-uniform white/black) START frame is only a flash when it
+        # isn't simply the slide's own background with every element still
+        # at opacity 0 - on a white deck that is exactly what a correct
+        # entrance looks like. The settled end frame's median stands in for
+        # the background. A blank END frame means nothing is visible once
+        # the slide has settled, which is always wrong.
+        start_sentinel, end_sentinel = is_sentinel_frame(start_png), is_sentinel_frame(end_png)
+        start_matches_background = (
+            abs(start_stats["mean"] - end_stats["median"]) <= thresholds["background_match_max_delta"]
+        )
+        start_bad = start_sentinel or (is_blank_frame(start_stats, thresholds) and not start_matches_background)
+        end_bad = end_sentinel or is_blank_frame(end_stats, thresholds)
+        boundary_checks.append({"slide_id": slide.slide_id, "boundary": "start",
+                                "at_seconds": round(start_at, 4), "sentinel": start_sentinel,
+                                **start_stats, "ok": not start_bad})
+        boundary_checks.append({"slide_id": slide.slide_id, "boundary": "end",
+                                "at_seconds": round(end_at, 4), "sentinel": end_sentinel,
+                                **end_stats, "ok": not end_bad})
+        for bad, sentinel, stats, where, at in (
+            (start_bad, start_sentinel, start_stats, "start", start_at),
+            (end_bad, end_sentinel, end_stats, "end", end_at),
+        ):
+            if not bad:
+                continue
+            kind = "capture-sentinel (magenta)" if sentinel else (
+                f"blank {stats['mean']:.0f}-mean/{stats['stddev']:.1f}-stddev"
             )
-        png = frames_dir / f"boundary_{slide.slide_id}_end.png"
-        extract_last_frame(silent_video, png)
-        stats = frame_stats(png)
-        blank = is_blank_frame(stats, thresholds)
-        record = {"slide_id": slide.slide_id, "boundary": "end",
-                  "at_seconds": round(slide.end, 4), "extracted_from_tail": True, **stats}
-        record["ok"] = not blank
-        boundary_checks.append(record)
-        if blank:
             errors.append(
-                f"blank frame at slide '{slide.slide_id}''s end boundary (tail of its segment) - the "
+                f"{kind} frame at slide '{slide.slide_id}''s {where} boundary (t={at:.3f}s) - the "
                 "flash-bug regression classes from the earlier plan"
             )
 
-    # --- 3. animation actually happened (on the silent video) --------------
-    animation_checks: list[dict[str, Any]] = []
-    entrance_t = lambda s: s.start + one_frame  # noqa: E731
-    settle_t = lambda s: s.end - one_frame      # noqa: E731
-    for slide in ctx.slides:
-        if slide.end - slide.start <= 2 * one_frame:
+        # Check 3: the slide's own entrance and settled frames must differ.
+        if end_frame - first_frame < 2:
             warnings.append(
-                f"slide '{slide.slide_id}' is shorter than 2 frames; skipping the animation-happened check"
+                f"slide '{slide.slide_id}' is shorter than 3 frames; skipping the animation-happened check"
             )
             continue
-        entrance = frames_dir / f"animation_in_{slide.slide_id}.png"
-        settle = frames_dir / f"animation_out_{slide.slide_id}.png"
-        extract_frame(silent_video, entrance_t(slide), entrance)
-        extract_last_frame(silent_video, settle)
-        delta = frame_delta(entrance, settle)
-        record = {"slide_id": slide.slide_id, "entrance_delta": delta}
-        if delta < thresholds["animation_min_mean_delta"]:
-            record["ok"] = False
-            animation_checks.append(record)
+        changed = frame_changed_fraction(start_png, end_png, thresholds["animation_pixel_delta"])
+        ok = changed >= thresholds["animation_min_changed_fraction"]
+        animation_checks.append({
+            "slide_id": slide.slide_id, "changed_fraction": round(changed, 6),
+            "entrance_delta": frame_delta(start_png, end_png), "ok": ok,
+        })
+        if not ok:
             errors.append(
                 f"slide '{slide.slide_id}' looks identical at its entrance and settle frames "
-                f"(mean delta {delta:.2f} < {thresholds['animation_min_mean_delta']}) - the slide's "
-                "animation never visibly happened (e.g. every template step resolved to nothing)"
+                f"({changed:.4%} of pixels changed by more than {thresholds['animation_pixel_delta']} levels, "
+                f"< {thresholds['animation_min_changed_fraction']:.4%}) - the slide's animation never "
+                "visibly happened (e.g. every template step resolved to nothing)"
             )
-        else:
-            record["ok"] = True
-            animation_checks.append(record)
 
     return {
         "ok": not errors,

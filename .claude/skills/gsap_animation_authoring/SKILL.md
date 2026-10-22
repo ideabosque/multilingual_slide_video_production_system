@@ -129,6 +129,22 @@ These rules govern the fixed engine and effect primitives in
   `.reverse()` at the end of a timeline breaks this "hold" assumption and
   will visibly snap the slide back to its pre-animation state partway
   through the recording.
+- **Must render correctly when seeked, not only when played.** Seek mode
+  (`window.__MOTION_MODE__ = "seek"`) builds the same timeline paused and a
+  renderer seeks it frame by frame, as HyperFrames will.
+  - **Never write the DOM from `onUpdate` (or any callback).** GSAP's
+    `seek()` suppresses callbacks by default, so a callback-driven effect
+    silently never changes under a seeking renderer; this is how
+    `count_up` broke. Tween a property whose setter writes the DOM
+    instead (see `animateCountUp`).
+  - **Apply start values at build time.** Use `.from()`/`.fromTo()`, which
+    render their start state immediately; a plain `.to()` on a proxy shows
+    the source state until it first renders, so t=0 depends on seek history.
+  - **No wall clock, no unseeded `Math.random()`, no per-tick
+    accumulation.** Every value must be a pure function of playhead time.
+
+  `tests/test_motion_runtime_seek.py` seeks out of order and mid-tween; add
+  a case there for any new effect primitive.
 - **No external asset loads inside the timeline's own logic.** Fonts and
   the GSAP library itself load once, before the timeline starts (see
   "Injection point" below) — a tween that waits on an image/font load

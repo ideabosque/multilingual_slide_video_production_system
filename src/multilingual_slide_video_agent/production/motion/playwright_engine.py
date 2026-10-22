@@ -16,14 +16,15 @@ silent video - it used to happen inside `_mux_clip` in the old monolithic
 `render_marketing_animation.py`, alongside the caption/audio muxing that
 now belongs to post.py.
 
-Exact length: each segment is encoded to whole frames at `ctx.fps` (CFR -
-the ASS burn-in filter requires CFR output, see config/video.yaml's fps
-note). Timing durations are rounded to whole frames with the rounding
-remainder carried forward into the next segment's target - the same
-convention plan B5 documents for Remotion's frame rounding ("carrying the
-remainder forward so cumulative drift stays under one frame") - so the
-assembled silent video's duration equals `ctx.total_duration` within one
-frame (B6 check 1), which the assembler verifies loudly.
+Exact length: each segment is encoded to an exact whole number of frames at
+`ctx.fps` (CFR - the ASS burn-in filter requires CFR output, see
+config/video.yaml's fps note), with boundaries rounded from the absolute
+timeline (`segment_frame_counts`), so every slide starts on the frame
+nearest its narration-driven start and the assembled silent video's
+duration equals `ctx.total_duration` within one frame (B6 check 1), which
+the assembler verifies loudly. (Encoding by seconds instead let a segment
+come out a frame short or long depending on how the 25fps webm's frames
+lined up, shifting slide boundaries by a frame at random.)
 """
 from __future__ import annotations
 
@@ -57,54 +58,72 @@ def check_available() -> list[str]:
     return []
 
 
-def _detect_content_lead(webm: Path, ctx: MotionRenderContext) -> float | None:
-    """Find the captured clip's content start ON ITS OWN TIMELINE.
+# How far past the wall-clock lead-in the sentinel search looks. The webm
+# timeline is never longer than wall-clock (sparse static frames only ever
+# compress it), so lead-in + this margin always covers the transition.
+_LEAD_PROBE_MARGIN_SECONDS = 2.0
+_LEAD_PROBE_WIDTH = 160
 
-    Playwright's raw webm recording is not guaranteed wall-clock (sparse
-    static lead content compresses the timeline), so the wall-clock
-    lead-in measurement used by the previous monolithic renderer can
-    undertrim - white `about:blank`/hidden-page frames surviving into the
-    segment, or the trim cutting into settled content. Instead, sample
-    the webm on a 10fps PNG strip with ONE ffmpeg pass (frame-indexed,
-    no seeking - screencast webms are sparse-keyframe and seek
-    unreliably) and take the first sample whose frame is non-blank
-    (B6's white/black pair) or *changes* against the previous sample.
-    Returns the trim position (half a frame before that sample, so `-ss`
-    decodes onto it), or None when nothing but blank was sampled (caller
-    falls back to the wall-clock measure; validation has the last word)."""
+
+def _detect_content_lead(webm: Path, ctx: MotionRenderContext, wall_clock_lead: float) -> float | None:
+    """Find where the slide's content starts ON THE WEBM'S OWN TIMELINE.
+
+    Live capture shows a solid magenta sentinel (slides/render.py,
+    CAPTURE_SENTINEL_MS) between `about:blank` and the revealed page, and
+    the timeline only starts playing when the sentinel goes away. Content
+    therefore starts at the first sampled frame after a sentinel frame that
+    isn't a sentinel itself. Keying on the sentinel - rather than on "first
+    non-blank frame" - works whatever the deck's background is: on a white
+    deck the first content frames (everything still at opacity 0) look
+    exactly like `about:blank`, so a blank-frame heuristic trimmed into the
+    entrance animation.
+
+    Only the first `wall_clock_lead + margin` seconds are decoded, at
+    `ctx.fps`, downscaled - the transition is always in there, and decoding
+    the whole clip at full resolution was wasted work.
+
+    Returns the trim position: the first content sample's time. The fps
+    filter samples the input frame *nearest* each output time, so the
+    sentinel frame before that content frame always has an earlier
+    timestamp, and an accurate `-ss` (which drops frames before the seek
+    point) can never start the segment on a sentinel frame. Trimming any
+    later only throws away entrance animation, of which live screencast
+    capture already records few frames.
+
+    When no sentinel frame was recorded at all, returns 0.0 (trim nothing):
+    the screencast only started after the reveal, so the webm already
+    begins on content and there is no lead-in to remove - trimming the
+    wall-clock lead-in there cut off the entrance animation (observed).
+    None only when the probe itself failed; the caller then falls back to
+    the wall-clock lead-in, and validation's sentinel check has the final
+    word either way."""
     from multilingual_slide_video_agent.production.motion import validate as mv
 
-    sample_fps = 10
-    probe_dir = webm.parent / "_lead_probe"
+    probe_dir = webm.parent / f"_lead_probe_{webm.stem}"
+    window = wall_clock_lead + _LEAD_PROBE_MARGIN_SECONDS
     try:
         probe_dir.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(webm),
-             "-vf", f"fps={sample_fps}", str(probe_dir / "f_%04d.png")],
+            ["ffmpeg", "-y", "-loglevel", "error", "-t", f"{window:.3f}", "-i", str(webm),
+             "-vf", f"fps={ctx.fps},scale={_LEAD_PROBE_WIDTH}:-2", str(probe_dir / "f_%05d.png")],
             check=True, capture_output=True,
         )
-    except Exception:  # noqa: BLE001 - fall back to wall-clock on any probe failure
-        return None
-    blanks = {"blank_max_stddev": 6.0, "blank_white_min_mean": 244.0, "blank_black_max_mean": 12.0}
-    prev_png = None
-    try:
+        seen_sentinel = False
         for i, png in enumerate(sorted(probe_dir.glob("f_*.png"))):
-            is_content = not mv.is_blank_frame(mv.frame_stats(png), blanks)
-            if not is_content and prev_png is not None and mv.frame_delta(prev_png, png) > 0.8:
-                is_content = True
-            if is_content:
-                timeline_t = i / sample_fps
-                return max(0.0, timeline_t - (0.5 / ctx.fps))
-            prev_png = png
-        return None
-    except Exception:  # noqa: BLE001
+            if mv.is_sentinel_frame(png):
+                seen_sentinel = True
+            elif seen_sentinel:
+                return i / ctx.fps
+        return None if seen_sentinel else 0.0
+    except Exception:  # noqa: BLE001 - fall back to wall-clock on any probe failure
         return None
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
 
 
-def _ffmpeg_encode_args(ctx: MotionRenderContext) -> list[str]:
+def _ffmpeg_encode_args(ctx: MotionRenderContext, frames: int) -> list[str]:
     encode = ctx.motion_config.get("encode", {})
+    hold_seconds = frames / ctx.fps + 1.0
     return [
         "-vf", (
             f"scale={ctx.resolution['width']}:{ctx.resolution['height']},"
@@ -112,13 +131,14 @@ def _ffmpeg_encode_args(ctx: MotionRenderContext) -> list[str]:
             # Hold-extend: Playwright's recorded webm timeline is not
             # guaranteed wall-clock (sparse static content compresses it),
             # so a segment's input can exhaust before its narration-driven
-            # target duration. Cloning the last frame is exactly the
+            # target length. Cloning the last frame is exactly the
             # runtime's own visual semantics - "plays once, then holds its
-            # final state" (gsap_animation_authoring SKILL.md) - and lets
-            # `-t` keep every segment exactly target-long. 5s headroom;
-            # `-t` always bounds the output.
-            "tpad=stop_mode=clone:stop_duration=5"
+            # final state" (gsap_animation_authoring SKILL.md). The pad
+            # covers the whole segment, so even an input that ends right
+            # after the trim still fills it; `-frames:v` bounds the output.
+            f"tpad=stop_mode=clone:stop_duration={hold_seconds:.3f}"
         ),
+        "-frames:v", str(frames),
         "-c:v", "libx264",
         "-preset", str(encode.get("preset", "medium")),
         "-crf", str(encode.get("crf", 19)),
@@ -128,33 +148,32 @@ def _ffmpeg_encode_args(ctx: MotionRenderContext) -> list[str]:
 
 
 def _encode_captured_clip_segment(
-    *, src: Path, dest: Path, duration: float, ctx: MotionRenderContext, lead_in: float
+    *, src: Path, dest: Path, frames: int, ctx: MotionRenderContext, lead_in: float
 ) -> None:
-    """One slide's captured clip as a silent CFR segment, target `duration`
-    seconds. `-ss` before `-i` seeks the video stream only, trimming the
-    measured blank lead-in off the front."""
+    """One slide's captured clip as a silent CFR segment of exactly
+    `frames` frames. `-ss` before `-i` seeks the video stream only,
+    trimming the lead-in off the front."""
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         *(["-ss", f"{lead_in:.3f}"] if lead_in > 0 else []),
         "-i", str(src),
-        "-t", f"{duration:.3f}",
-        *_ffmpeg_encode_args(ctx),
+        *_ffmpeg_encode_args(ctx, frames),
         str(dest),
     ]
     subprocess.run(cmd, check=True, capture_output=True)
 
 
 def _encode_title_card_segment(
-    *, slide_one: Path, dest: Path, duration: float, ctx: MotionRenderContext
+    *, slide_one: Path, dest: Path, frames: int, ctx: MotionRenderContext
 ) -> None:
     """A static title-card segment from slide 1's rendered image - not
     GSAP-animated, matching render_slideshow.py's own title card treatment.
-    (`-loop 1` makes the single PNG an infinite stream that `-t` bounds.)"""
+    (`-loop 1` makes the single PNG an infinite stream that `-frames:v`
+    bounds.)"""
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-loop", "1", "-i", str(slide_one),
-        "-t", f"{duration:.3f}",
-        *_ffmpeg_encode_args(ctx),
+        *_ffmpeg_encode_args(ctx, frames),
         str(dest),
     ]
     subprocess.run(cmd, check=True, capture_output=True)
@@ -162,39 +181,70 @@ def _encode_title_card_segment(
 
 def _encode_segment(seg: dict[str, Any], dest: Path, ctx: MotionRenderContext) -> None:
     if seg.get("kind") == "title":
-        _encode_title_card_segment(slide_one=seg["src"], dest=dest, duration=seg["duration"], ctx=ctx)
+        _encode_title_card_segment(slide_one=seg["src"], dest=dest, frames=seg["frames"], ctx=ctx)
     else:
         _encode_captured_clip_segment(
-            src=seg["src"], dest=dest, duration=seg["duration"], ctx=ctx,
+            src=seg["src"], dest=dest, frames=seg["frames"], ctx=ctx,
             lead_in=seg.get("video_lead_in_seconds", 0.0),
         )
+
+
+def _frame_count(path: Path) -> int:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets",
+         "-show_entries", "stream=nb_read_packets", "-of", "csv=p=0", str(path)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return int(out.split(",")[0])
+
+
+def segment_frame_counts(durations: list[float], fps: int) -> list[int]:
+    """Whole-frame length of each consecutive segment. Boundaries are
+    rounded from the absolute timeline (round(t * fps)), not per segment,
+    so every slide starts on the frame nearest its narration-driven start
+    and rounding never accumulates - the same idea as plan B5's Remotion
+    frame rounding."""
+    counts = []
+    t = 0.0
+    for duration in durations:
+        start_frame = round(t * fps)
+        t += duration
+        counts.append(round(t * fps) - start_frame)
+    return counts
 
 
 def assemble_silent_video(
     *, ctx: MotionRenderContext, segments: list[dict[str, Any]], work_dir: Path, dest: Path
 ) -> Path:
-    """Encode each timing item as a silent CFR segment (whole frames at
-    ctx.fps), carrying each segment's rounding remainder forward into the
-    next segment's target duration, then concat-copying them into one
-    exact-length silent video at `dest`. Fails loudly if the result drifts
-    from `ctx.total_duration` by more than one frame (B6 check 1).
+    """Encode each timing item as a silent CFR segment of an exact whole
+    number of frames (see `segment_frame_counts`), then concat-copy them
+    into one silent video at `dest`. Fails loudly if any segment doesn't
+    come out at its frame count - a short segment would otherwise shift
+    every later slide's visuals against its narration and captions - or if
+    the result drifts from `ctx.total_duration` by more than one frame (B6
+    check 1).
 
     Each segment dict: {"kind": "title"|"slide", "src": Path,
-    "duration": target float, "video_lead_in_seconds": float, for slides}.
-    Segment encoding lives here (not per-caller) so the carry-forward
+    "duration": target float, "slide_id"/"video_lead_in_seconds" for
+    slides}. Segment encoding lives here (not per-caller) so the frame
     rounding can't be duplicated inconsistently."""
     if not segments:
         raise MotionError("no segments to assemble - production.json's timing produced no renderable items")
     seg_dir = work_dir / "segments"
     seg_dir.mkdir(parents=True, exist_ok=True)
 
-    carry = 0.0
+    frame_counts = segment_frame_counts([seg["duration"] for seg in segments], ctx.fps)
     built: list[Path] = []
-    for i, seg in enumerate(segments):
-        duration = max(0.0, seg["duration"] + carry)
+    for i, (seg, frames) in enumerate(zip(segments, frame_counts)):
         enc = seg_dir / f"seg_{i:03d}.mp4"
-        _encode_segment({**seg, "duration": duration}, enc, ctx)
-        carry += duration - ffprobe_duration(str(enc))
+        _encode_segment({**seg, "frames": frames}, enc, ctx)
+        actual = _frame_count(enc)
+        if actual != frames:
+            label = seg.get("slide_id") or seg.get("kind", f"segment {i}")
+            raise MotionError(
+                f"segment '{label}' encoded to {actual} frames instead of {frames} - refusing to "
+                "shift later slides out of sync with their narration"
+            )
         built.append(enc)
 
     list_path = seg_dir / "concat_list.txt"
@@ -257,19 +307,17 @@ class PlaywrightEngine:
             )
             raise MotionError(str(e)) from e
         clip_by_slide = {c["slide_id"]: Path(c["clip"]) for c in capture_manifest["clips"]}
-        # Content-lead detection per clip (see _detect_content_lead): the
-        # wall-clock `video_lead_in_seconds` is only a fallback here,
-        # because webm timelines are not wall-clock. This whole trim
-        # mechanism is live-capture's own fragility (plan D1) - it exists
-        # only in this engine and phase, and the boundary validation below
-        # has the final word on whether the trim worked.
+        # Sentinel-based lead-in detection per clip (see
+        # _detect_content_lead): the wall-clock `video_lead_in_seconds` is
+        # only its search window and fallback, because webm timelines are
+        # not wall-clock. This whole trim mechanism is live-capture's own
+        # fragility (plan D1) - it exists only in this engine, and the
+        # validation pass's sentinel/blank checks have the final word.
         lead_in_by_slide = {}
         for c in capture_manifest["clips"]:
-            detected = _detect_content_lead(Path(c["clip"]), ctx)
-            lead_in_by_slide[c["slide_id"]] = (
-                detected if detected is not None
-                else c.get("video_lead_in_seconds", 0.0)
-            )
+            wall_clock_lead = float(c.get("video_lead_in_seconds", 0.0))
+            detected = _detect_content_lead(Path(c["clip"]), ctx, wall_clock_lead)
+            lead_in_by_slide[c["slide_id"]] = detected if detected is not None else wall_clock_lead
 
         segments: list[dict[str, Any]] = []
         for item in ctx.timing:
@@ -286,7 +334,7 @@ class PlaywrightEngine:
                 if video_path is None:
                     raise MotionError(f"no captured animation clip for slide '{item['slide_id']}'")
                 segments.append({
-                    "kind": "slide", "src": video_path, "duration": duration,
+                    "kind": "slide", "slide_id": item["slide_id"], "src": video_path, "duration": duration,
                     "video_lead_in_seconds": lead_in_by_slide.get(item["slide_id"], 0.0),
                 })
 
@@ -296,6 +344,5 @@ class PlaywrightEngine:
         try:
             assemble_silent_video(ctx=ctx, segments=segments, work_dir=assembly_dir, dest=silent)
         finally:
-            shutil.rmtree(assembly_dir / "segments", ignore_errors=True)
-        shutil.rmtree(assembly_dir, ignore_errors=True)
+            shutil.rmtree(assembly_dir, ignore_errors=True)
         return silent

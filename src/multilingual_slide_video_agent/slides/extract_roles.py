@@ -12,13 +12,17 @@ translated DOM it is localized automatically. The bundle is injected in
 `seek` mode so the timeline stays paused at 0: role text is read before any
 tween has rendered (a live timeline's count-up would race the extraction).
 
-Runs of the same injection the capture path uses (`_inject_animation_assets`
-with `motion_mode="seek"`), so a deck whose roles were extracted is already
-in the capture-ready state.
+The injection (`_inject_animation_assets` with `motion_mode="seek"`) goes
+into a temporary copy of the deck, never the translated deck itself: a
+seek-mode page builds its timeline paused and never plays it, so leaving
+that injection in place would freeze the deck at its animation start state
+for anything that opens it afterwards.
 """
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +45,6 @@ def extract_deck_roles(
     out_path: str | Path,
     viewport: str = "1920x1080",
 ) -> dict[str, Any]:
-    from playwright.sync_api import sync_playwright
-
     from multilingual_slide_video_agent.slides.render import (
         AnimationCaptureError,
         RenderError,
@@ -61,15 +63,40 @@ def extract_deck_roles(
 
     spec = _load_json(animation_path / "spec.json")
     template_by_slide = {s["slide_id"]: s["template"] for s in spec.get("slides", [])}
-    slide_files = list_slide_files(deck_path)
-    if not slide_files:
+    if not list_slide_files(deck_path):
         raise ExtractRolesError(f"no slides found in {deck_path}")
 
-    try:
-        _inject_animation_assets(deck_path, animation_path, template_by_slide, motion_mode="seek")
-    except AnimationCaptureError as e:
-        raise ExtractRolesError(str(e)) from e
+    with tempfile.TemporaryDirectory(prefix="msv_roles_", ignore_cleanup_errors=True) as tmp:
+        work_deck = Path(tmp) / "deck"
+        shutil.copytree(deck_path, work_deck)
+        try:
+            _inject_animation_assets(work_deck, animation_path, template_by_slide, motion_mode="seek")
+        except AnimationCaptureError as e:
+            raise ExtractRolesError(str(e)) from e
+        entries, console_errors = _extract_from_injected_deck(
+            work_deck, template_by_slide, animation_path, width, height,
+        )
 
+    if console_errors:
+        raise ExtractRolesError("page error(s) during role extraction: " + "; ".join(console_errors))
+
+    manifest = {
+        "deck_dir": str(deck_path),
+        "animation_dir": str(animation_path),
+        "out_path": str(out_file),
+        "viewport": {"width": width, "height": height},
+        "slides": entries,
+    }
+    out_file.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return manifest
+
+
+def _extract_from_injected_deck(
+    work_deck: Path, template_by_slide: dict[str, str], animation_path: Path, width: int, height: int,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    from playwright.sync_api import sync_playwright
+
+    slide_files = list_slide_files(work_deck)
     entries: list[dict[str, Any]] = []
     console_errors: list[str] = []
     with sync_playwright() as p:
@@ -99,16 +126,4 @@ def extract_deck_roles(
             page.close()
         finally:
             browser.close()
-
-    if console_errors:
-        raise ExtractRolesError("page error(s) during role extraction: " + "; ".join(console_errors))
-
-    manifest = {
-        "deck_dir": str(deck_path),
-        "animation_dir": str(animation_path),
-        "out_path": str(out_file),
-        "viewport": {"width": width, "height": height},
-        "slides": entries,
-    }
-    out_file.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    return manifest
+    return entries, console_errors

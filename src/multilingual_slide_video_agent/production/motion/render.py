@@ -26,6 +26,12 @@ from multilingual_slide_video_agent.production.motion import post
 KNOWN_ENGINE_NAMES = ("playwright", "hyperframes", "remotion")
 
 
+def motion_manifest_path(out_dir: Path, output_name: str) -> Path:
+    """`<output stem>.motion.json` next to the video it describes, e.g.
+    marketing_playwright.mp4 -> marketing_playwright.motion.json."""
+    return out_dir / f"{Path(output_name).stem}.motion.json"
+
+
 def get_engine(name: str) -> MotionEngine:
     """Resolve an engine name to an instance. Only `playwright` exists in
     Phase 1; `hyperframes`/`remotion` are real engines in Phases 2b/3 and
@@ -113,7 +119,10 @@ def render_motion(
 
     def _write_motion_manifest(validation: dict[str, Any]) -> Path:
         motion_manifest["validation"] = validation
-        motion_path = out_dir / "motion.json"
+        # Named after the video it describes, so renders by different
+        # engines (or to different output names) in one language directory
+        # never overwrite each other's record - B6 #5 compares them.
+        motion_path = motion_manifest_path(out_dir, output_name)
         motion_path.write_text(json.dumps(motion_manifest, indent=2, ensure_ascii=False), encoding="utf-8")
         return motion_path
 
