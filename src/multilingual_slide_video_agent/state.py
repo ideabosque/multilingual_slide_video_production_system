@@ -314,10 +314,15 @@ class PipelineState:
     def invalidate_from(self, language: str, from_stage: str) -> list[str]:
         """Reset `from_stage` and every downstream stage to pending, clearing
         their artifacts, so they regenerate on the next run. Earlier stages
-        and other languages are untouched."""
+        and other languages are untouched.
+
+        Any rerun also withdraws this language's publish approval: what was
+        approved is being replaced, so publishing waits for a fresh human
+        review of the new video or metadata (decided 2026-10-22)."""
         if from_stage not in STAGES:
             raise ValueError(f"Unknown stage '{from_stage}'")
         self.ensure_language(language)
+        self.languages[language]["publish_approved"] = False
         idx = STAGES.index(from_stage)
         reset = []
         for stage in STAGES[idx:]:

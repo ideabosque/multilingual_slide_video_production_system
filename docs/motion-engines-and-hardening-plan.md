@@ -104,9 +104,10 @@ What Phase 0 actually changed, where it differs from the text below:
 - **A7:** libass does **not** honour `\\` as an escape (verified by burning
   test captions). A literal backslash is instead followed by an invisible
   U+2060 WORD JOINER. `\{` and `\}` work as described.
-- **Not changed:** a rerun keeps `publish_approved`. As a result, an
-  approved language that is re-rendered can publish without another review.
-  This needs a decision before it's changed.
+- **Publish approval on rerun (decided 2026-10-22):** any rerun of a
+  language now withdraws its `publish_approved`, so a re-rendered video, or
+  changed metadata, waits for a fresh human review before publishing.
+  Phase 0 had left this unchanged pending the decision.
 - **Tests:** 68 → 97, all passing, including the ffmpeg smoke test.
 
 This plan covers two pieces of work that can ship separately:

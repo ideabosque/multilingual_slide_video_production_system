@@ -187,3 +187,19 @@ def test_rerun_of_earlier_stage_archives_video_id(isolated_dirs, source_deck):
     assert lang["previous_youtube_videos"][0]["reason"] == "rerun from 'tts'"
     report = state.to_report()["languages"]["en-US"]
     assert report["previous_youtube_videos"][0]["youtube_video_id"] == "vid123"
+
+
+# ---------- publish approval after a rerun ----------
+
+@pytest.mark.parametrize("from_stage", ["tts", "rendering", "publishing"])
+def test_any_rerun_withdraws_publish_approval(isolated_dirs, source_deck, from_stage):
+    """A re-rendered (or re-described) video must be reviewed again before
+    it can publish."""
+    state = PipelineState.create(
+        run_id="run-approve", project_id="proj", source_deck=str(source_deck), language_codes=["en-US", "zh-TW"],
+    )
+    state.approve_publish("en-US")
+    state.approve_publish("zh-TW")
+    state.invalidate_from("en-US", from_stage)
+    assert state.languages["en-US"]["publish_approved"] is False
+    assert state.languages["zh-TW"]["publish_approved"] is True     # other languages untouched

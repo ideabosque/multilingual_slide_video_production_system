@@ -99,6 +99,9 @@ msv motion install                                  # only needed for the Node-b
 - Mutate run state only through `PipelineState.transaction(run_id)`, never a
   bare `load()`/`save()`. Language rollout runs in parallel, and the unlocked
   pattern loses updates.
+- Any rerun of a language withdraws its publish approval
+  (`invalidate_from`). A changed video or changed metadata always needs a
+  fresh human review before publishing; don't carry an old approval over.
 - Never translate from an already-translated deck. Translations apply by
   node ID onto a fresh copy of the original deck, and `source_deck_fingerprint`
   (content-based, `FINGERPRINT_ALGO`) guards this.
