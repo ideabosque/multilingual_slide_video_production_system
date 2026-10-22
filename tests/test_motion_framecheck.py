@@ -65,3 +65,14 @@ def test_delta_size_mismatch_fails_named(tmp_path):
         assert "differ" in str(e)
     else:
         raise AssertionError("expected MotionError")
+
+def test_white_frame_with_a_little_small_text_is_not_blank(tmp_path):
+    """A white slide with small text has a low stddev (here ~5.3, under the
+    old 6.0 rule); counting content pixels tells it apart from empty."""
+    arr = numpy.full((300, 400), 255.0)
+    arr[100:103, 50:74] = 40.0                     # 72 dark "text" pixels, 0.06%
+    small_text = _png(tmp_path, "small_text", arr)
+    stats = frame_stats(small_text)
+    assert stats["stddev"] < THRESHOLDS["blank_max_stddev"]
+    assert stats["content_fraction"] > 0.0002
+    assert is_blank_frame(stats, THRESHOLDS) is False

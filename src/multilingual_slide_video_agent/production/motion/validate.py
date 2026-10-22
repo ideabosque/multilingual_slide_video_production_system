@@ -55,7 +55,18 @@ def frame_stats(png_path: Path) -> dict[str, float]:
     background). Exposed for unit tests (and `motion doctor` diagnostics
     later)."""
     arr = _gray_array(png_path)
-    return {"mean": float(arr.mean()), "stddev": float(arr.std()), "median": float(numpy.median(arr))}
+    median = float(numpy.median(arr))
+    return {
+        "mean": float(arr.mean()), "stddev": float(arr.std()), "median": median,
+        # Share of pixels clearly different from the background (the
+        # median): ~0 for an empty frame, well above it for any real text.
+        "content_fraction": float((numpy.abs(arr - median) > CONTENT_PIXEL_DELTA).mean()),
+    }
+
+
+# A pixel counts as content when it differs from the frame's background by
+# more than this many gray levels (encoder noise stays within a few).
+CONTENT_PIXEL_DELTA = 24
 
 
 def is_sentinel_frame(png_path: Path) -> bool:
@@ -123,14 +134,18 @@ def extract_last_frame(video_path: Path, out_png: Path) -> None:
 
 
 def is_blank_frame(stats: dict[str, float], thresholds: dict[str, Any]) -> bool:
-    """A frame is "blank" when it's near-uniform (low stddev) AND its mean
-    sits at the white or black end. Brand-tinted backgrounds don't trip it:
-    the brand's warm off-white page background is documented in
-    config/design_system.yaml, well below `blank_white_min_mean`."""
-    return (
-        stats["stddev"] <= thresholds["blank_max_stddev"]
-        and (stats["mean"] >= thresholds["blank_white_min_mean"] or stats["mean"] <= thresholds["blank_black_max_mean"])
-    )
+    """A frame is "blank" when its mean sits at the white or black end AND it
+    has (almost) no content. Brand-tinted backgrounds don't trip it: the
+    brand's warm off-white page background is documented in
+    config/design_system.yaml, well below `blank_white_min_mean`.
+
+    "No content" is a near-zero `content_fraction` when available: a stddev
+    threshold alone misreads a white slide with a little small text (stddev
+    ~5-7, observed) as empty. Without it, the stddev rule applies."""
+    extreme = stats["mean"] >= thresholds["blank_white_min_mean"] or stats["mean"] <= thresholds["blank_black_max_mean"]
+    if "content_fraction" in stats:
+        return extreme and stats["content_fraction"] < thresholds.get("blank_max_content_fraction", 0.0002)
+    return extreme and stats["stddev"] <= thresholds["blank_max_stddev"]
 
 
 def validate_motion(
@@ -152,6 +167,7 @@ def validate_motion(
         "animation_pixel_delta": 24,
         "animation_min_changed_fraction": 0.0002,
         "background_match_max_delta": 12.0,
+        "settle_before_end_seconds": 0.6,
     }, **(ctx.motion_config.get("validation", {}) or {})}
     one_frame = 1.0 / ctx.fps
     frames_dir = work_dir / "validation_frames"
@@ -204,30 +220,43 @@ def validate_motion(
             extract_last_frame(silent_video, end_png)
         else:
             extract_frame(silent_video, end_at - epsilon, end_png)
-        start_stats, end_stats = frame_stats(start_png), frame_stats(end_png)
+        # The "settled" frame: the slide with everything in, just before any
+        # exit animation (the playful style fades each slide out before its
+        # cut, so its literal last frame is legitimately empty).
+        settle_frame = end_frame - round(thresholds["settle_before_end_seconds"] * ctx.fps)
+        if settle_frame - first_frame >= 2:
+            settle_png = frames_dir / f"boundary_{slide.slide_id}_settled.png"
+            extract_frame(silent_video, settle_frame / ctx.fps - epsilon, settle_png)
+        else:
+            settle_frame, settle_png = end_frame, end_png
+        start_stats, settle_stats = frame_stats(start_png), frame_stats(settle_png)
+        end_stats = frame_stats(end_png)
 
-        # Check 2: a surviving capture sentinel is always a flash. A blank
-        # (near-uniform white/black) START frame is only a flash when it
-        # isn't simply the slide's own background with every element still
-        # at opacity 0 - on a white deck that is exactly what a correct
-        # entrance looks like. The settled end frame's median stands in for
-        # the background. A blank END frame means nothing is visible once
-        # the slide has settled, which is always wrong.
+        # Check 2: a surviving capture sentinel (first or last frame) is
+        # always a flash. A blank (near-uniform white/black) START frame is
+        # only a flash when it isn't simply the slide's own background with
+        # every element still at opacity 0 - on a white deck that is exactly
+        # what a correct entrance looks like; the settled frame's median
+        # stands in for the background. A blank SETTLED frame means nothing
+        # is visible once the slide has played in, which is always wrong.
         start_sentinel, end_sentinel = is_sentinel_frame(start_png), is_sentinel_frame(end_png)
         start_matches_background = (
-            abs(start_stats["mean"] - end_stats["median"]) <= thresholds["background_match_max_delta"]
+            abs(start_stats["mean"] - settle_stats["median"]) <= thresholds["background_match_max_delta"]
         )
         start_bad = start_sentinel or (is_blank_frame(start_stats, thresholds) and not start_matches_background)
-        end_bad = end_sentinel or is_blank_frame(end_stats, thresholds)
+        settle_blank = is_blank_frame(settle_stats, thresholds)
+        end_bad = end_sentinel or settle_blank
         boundary_checks.append({"slide_id": slide.slide_id, "boundary": "start",
                                 "at_seconds": round(start_at, 4), "sentinel": start_sentinel,
                                 **start_stats, "ok": not start_bad})
         boundary_checks.append({"slide_id": slide.slide_id, "boundary": "end",
                                 "at_seconds": round(end_at, 4), "sentinel": end_sentinel,
-                                **end_stats, "ok": not end_bad})
+                                "settled_at_seconds": round(settle_frame / ctx.fps, 4),
+                                **settle_stats, "ok": not end_bad})
         for bad, sentinel, stats, where, at in (
             (start_bad, start_sentinel, start_stats, "start", start_at),
-            (end_bad, end_sentinel, end_stats, "end", end_at),
+            (end_bad, end_sentinel, end_stats if end_sentinel else settle_stats, "end",
+             end_at if end_sentinel else settle_frame / ctx.fps),
         ):
             if not bad:
                 continue
@@ -240,16 +269,16 @@ def validate_motion(
             )
 
         # Check 3: the slide's own entrance and settled frames must differ.
-        if end_frame - first_frame < 2:
+        if settle_frame - first_frame < 2:
             warnings.append(
                 f"slide '{slide.slide_id}' is shorter than 3 frames; skipping the animation-happened check"
             )
             continue
-        changed = frame_changed_fraction(start_png, end_png, thresholds["animation_pixel_delta"])
+        changed = frame_changed_fraction(start_png, settle_png, thresholds["animation_pixel_delta"])
         ok = changed >= thresholds["animation_min_changed_fraction"]
         animation_checks.append({
             "slide_id": slide.slide_id, "changed_fraction": round(changed, 6),
-            "entrance_delta": frame_delta(start_png, end_png), "ok": ok,
+            "entrance_delta": frame_delta(start_png, settle_png), "ok": ok,
         })
         if not ok:
             errors.append(

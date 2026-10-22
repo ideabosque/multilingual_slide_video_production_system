@@ -33,7 +33,7 @@
     return scope === document ? document.documentElement : scope;
   }
 
-  function readTokens(scope) {
+  function readTokens(scope, slideDuration) {
     var cs = getComputedStyle(scopeElement(scope));
     var num = function (name, fallback) {
       var raw = cs.getPropertyValue(name).trim();
@@ -48,6 +48,11 @@
       slideExit: num("--ds-motion-slide-exit-ms", 320) / 1000,
       accentColor: cs.getPropertyValue("--ds-color-accent-signal").trim() || "#D87C2C",
       ease: "power2.out",
+      // The slide's on-screen length (narration + pause). Known to frame-
+      // seeking engines; a sensible default otherwise. Beat positions and
+      // the ambient/exit effects are laid out against it.
+      slideDuration: slideDuration > 0 ? slideDuration : 6,
+      scope: scope,
     };
   }
 
@@ -94,8 +99,18 @@
     return Array.prototype.slice.call(scope.querySelectorAll(tagSelector));
   }
 
+  // The element holding the whole slide: what camera moves (drift) and
+  // exits act on. HyperFrames slides wrap their body in
+  // [data-motion-slide-body] (hyperframes_engine.py); a standalone page
+  // uses <body>.
+  function slideElement(scope) {
+    if (scope === document) return document.body;
+    return scope.querySelector("[data-motion-slide-body]") || scope;
+  }
+
   function roleElements(scope) {
     return {
+      slide: slideElement(scope),
       // h3 only when the slide has no h1/h2 (card-layout slides headline
       // with h3 - run-20260911-002's slide_010 resolved no title at all).
       title: pickEl(scope, ".slide-title", "h1, h2", "h3"),
@@ -206,13 +221,50 @@
     return null;
   }
 
+  // Splits an element's text into one inline-block span per word (per
+  // character for Chinese/Japanese, which don't separate words with
+  // spaces), keeping whitespace and child elements, so `words` can animate
+  // them individually. Done once per element, at build time - the same
+  // DOM every time the timeline is seeked.
+  var CJK_RE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/;
+  function splitWords(el) {
+    if (el.__motionWords) return el.__motionWords;
+    var spans = [];
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var textNodes = [];
+    for (var n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n.nodeValue.trim()) textNodes.push(n);
+    }
+    textNodes.forEach(function (node) {
+      var text = node.nodeValue;
+      var parts = CJK_RE.test(text) ? Array.from(text) : text.split(/(\s+)/);
+      var frag = document.createDocumentFragment();
+      parts.forEach(function (part) {
+        if (!part) return;
+        if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+        var span = document.createElement("span");
+        span.textContent = part;
+        span.style.display = "inline-block";
+        span.setAttribute("data-motion-word", "");
+        frag.appendChild(span);
+        spans.push(span);
+      });
+      node.parentNode.replaceChild(frag, node);
+    });
+    el.__motionWords = spans;
+    return spans;
+  }
+
   // ---------- shared effect: animate a stat element's number counting up ----------
   // Tweens a counter from 0 to the parsed value (see statParts), preserving
   // the original prefix/suffix text, decimal precision and any styled child
   // elements (only the digits' own text node is rewritten). Falls back to a
   // plain scale-in (no count-up) if no number is found - never leaves the
-  // element blank.
-  function animateCountUp(tl, ds, el, position) {
+  // element blank. `params.pop` (playful style) makes the entrance a
+  // springy scale-in instead of a fade - one entrance tween either way, so
+  // it never stacks a second .from() on the same element.
+  function animateCountUp(tl, ds, el, position, step) {
+    var p = (step && step.params) || {};
     var textNode = numberTextNode(el);
     var stat = textNode ? statParts(textNode.nodeValue) : null;
     if (!stat) {
@@ -237,13 +289,20 @@
         textNode.nodeValue = prefix + v.toFixed(decimals) + suffix;
       },
     });
-    tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);
+    if (p.pop) {
+      tl.from(el, {
+        opacity: 0, scale: p.scale !== undefined ? p.scale : 0.3,
+        duration: ds.slideEnter * 1.6, ease: "elastic.out(1, 0.55)",
+      }, position);
+    } else {
+      tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);
+    }
     // fromTo renders its start value as soon as it's built (the element is
     // still at opacity 0 then), so t=0 shows the same "0" on first visit as
     // after seeking back - a plain .to() left the source text until the
     // tween first rendered, which made t=0 depend on seek history.
     tl.fromTo(counter, { val: 0 }, {
-      val: target, duration: ds.slideEnter, ease: "power2.out", immediateRender: true,
+      val: target, duration: p.pop ? ds.slideEnter * 2.5 : ds.slideEnter, ease: "power2.out", immediateRender: true,
     }, position);
   }
 
@@ -269,6 +328,20 @@
     if (token == null) return fallback;
     var key = DURATION_TOKENS[token];
     return key ? ds[key] : fallback;
+  }
+
+  // A step position may be "beat:<fraction>" - that fraction of the
+  // slide's duration, in seconds - so motion can arrive while the narrator
+  // is still talking instead of all firing in the first half-second.
+  function resolvePosition(position, ds) {
+    if (typeof position === "string" && position.indexOf("beat:") === 0) {
+      return parseFloat(position.slice(5)) * ds.slideDuration;
+    }
+    return position;
+  }
+
+  function asList(target) {
+    return Array.isArray(target) ? target : [target];
   }
 
   function resolveRole(role, els) {
@@ -314,23 +387,137 @@
     accent_line: function (tl, ds, target, position) {
       drawAccentLine(tl, ds, target, position);
     },
-    count_up: function (tl, ds, target, position) {
-      animateCountUp(tl, ds, target, position);
+    count_up: function (tl, ds, target, position, step) {
+      animateCountUp(tl, ds, target, position, step);
+    },
+
+    // ----- playful style (config/animation_templates_playful.yaml) -----
+    // Every effect below is seek-safe: explicit from/to values, finite
+    // repeats, no callbacks, no wall clock - each frame is a pure function
+    // of timeline time.
+
+    // Springy scale-in with overshoot.
+    pop: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var vars = {
+        opacity: 0,
+        scale: p.scale !== undefined ? p.scale : 0.4,
+        duration: resolveDurationToken(ds, step.duration, ds.slideEnter),
+        ease: step.ease || "back.out(2.2)",
+      };
+      if (p.y !== undefined) vars.y = p.y;
+      if (p.x !== undefined) vars.x = p.x;
+      if (p.rotation !== undefined) vars.rotation = p.rotation;
+      if (p.stagger !== undefined) vars.stagger = p.stagger;
+      tl.from(target, vars, position);
+    },
+
+    // Kinetic text: words (or CJK characters) bounce up one after another.
+    words: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var spans = [];
+      asList(target).forEach(function (el) { spans = spans.concat(splitWords(el)); });
+      if (!spans.length) return;
+      tl.from(spans, {
+        opacity: 0,
+        y: p.y !== undefined ? p.y : 36,
+        rotation: p.rotation !== undefined ? p.rotation : 6,
+        scale: p.scale !== undefined ? p.scale : 0.9,
+        duration: resolveDurationToken(ds, step.duration, ds.slideEnter),
+        ease: step.ease || "back.out(2)",
+        stagger: p.stagger !== undefined ? p.stagger : 0.05,
+      }, position);
+    },
+
+    // Items pop in one by one, spread between two fractions of the slide's
+    // duration, so a long narration keeps revealing content. The first item
+    // never waits longer than `first_max` seconds (default 1.2): on a long
+    // slide, 15% can be 7s of empty screen, and the first item often
+    // carries the slide's headline.
+    beats: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var items = asList(target);
+      var first = Math.min((p.from !== undefined ? p.from : 0.12) * ds.slideDuration,
+                           p.first_max !== undefined ? p.first_max : 1.2);
+      var last = Math.max(first, (p.to !== undefined ? p.to : 0.6) * ds.slideDuration);
+      var duration = resolveDurationToken(ds, step.duration, ds.slideEnter);
+      items.forEach(function (item, i) {
+        var at = items.length > 1 ? first + (last - first) * i / (items.length - 1) : first;
+        tl.from(item, {
+          opacity: 0,
+          scale: p.scale !== undefined ? p.scale : 0.5,
+          y: p.y !== undefined ? p.y : 30,
+          rotation: p.rotation !== undefined ? (i % 2 ? -p.rotation : p.rotation) : 0,
+          duration: duration,
+          ease: step.ease || "back.out(2.4)",
+        }, at);
+      });
+    },
+
+    // Gentle ambient bob from `position` to the end of the slide.
+    float: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var start = typeof position === "number" ? position : ds.slideEnter + 0.4;
+      var half = (p.period !== undefined ? p.period : 3) / 2;
+      var repeats = Math.floor((ds.slideDuration - start) / half) - 1;
+      if (repeats < 1) return;
+      tl.fromTo(target, { y: 0 }, {
+        y: -(p.y !== undefined ? p.y : 8), duration: half, ease: "sine.inOut",
+        yoyo: true, repeat: repeats, immediateRender: false,
+      }, start);
+    },
+
+    // Slow camera push-in on the whole slide, for the slide's full length.
+    drift: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      asList(target).forEach(function (el) { el.style.transformOrigin = "50% 50%"; });
+      tl.fromTo(target, { scale: 1 }, {
+        scale: p.scale !== undefined ? p.scale : 1.035,
+        duration: ds.slideDuration, ease: "none", immediateRender: false,
+      }, 0);
+    },
+
+    // Quick fade-up just before the cut to the next slide. Opacity and y
+    // only, so it never fights drift's scale on the same element.
+    exit: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var duration = resolveDurationToken(ds, step.duration, ds.slideExit);
+      tl.fromTo(target, { opacity: 1, y: 0 }, {
+        opacity: 0, y: p.y !== undefined ? p.y : -18, duration: duration,
+        ease: step.ease || "power2.in", immediateRender: false,
+      }, Math.max(0, ds.slideDuration - duration));
     },
   };
 
   // Plays one template's `steps` (from templates_config.js) into `tl`.
+  // Effects that bring an element in from a hidden starting state. Two of
+  // them on one element break it: GSAP's second .from() records the first
+  // one's hidden state as its end value, so the element never appears
+  // (e.g. a `subtitle` that is also one of the `body` paragraphs). The
+  // first entrance step claims an element; later entrance steps skip it.
+  var ENTRANCE_EFFECTS = { reveal: true, count_up: true, pop: true, words: true, beats: true };
+
+  function unclaimed(target, claimed) {
+    if (Array.isArray(target)) {
+      return target.filter(function (el) { return claimed.indexOf(el) === -1; });
+    }
+    return claimed.indexOf(target) === -1 ? target : null;
+  }
+
   function runTemplateSteps(tl, ds, els, steps) {
     var ranStepIds = {};
     var anyStepRan = false;
+    var claimed = [];
     for (var i = 0; i < steps.length; i++) {
       var step = steps[i];
       if (step.skip_if_ran && ranStepIds[step.skip_if_ran]) continue;
 
       var target = resolveRole(step.role, els);
+      if (target != null && ENTRANCE_EFFECTS[step.effect]) target = unclaimed(target, claimed);
       var isEmpty = target == null || (Array.isArray(target) && target.length === 0);
       if (isEmpty) continue;
       if (step.min_count && Array.isArray(target) && target.length < step.min_count) continue;
+      if (ENTRANCE_EFFECTS[step.effect]) claimed = claimed.concat(asList(target));
 
       var effect = EFFECTS[step.effect];
       if (!effect) {
@@ -340,7 +527,7 @@
         throw new Error("Unknown animation effect in templates_config.js: " + step.effect);
       }
       var position = (!anyStepRan && step.position_if_first !== undefined) ? step.position_if_first : step.position;
-      effect(tl, ds, target, position, step);
+      effect(tl, ds, target, resolvePosition(position, ds), step);
 
       if (step.id) ranStepIds[step.id] = true;
       anyStepRan = true;
@@ -358,7 +545,8 @@
   window.__motionBuildTimeline = function (scope, opts) {
     opts = opts || {};
     var tl = gsap.timeline(opts.paused === false ? undefined : { paused: true });
-    runTemplateSteps(tl, readTokens(scope), roleElements(scope), templateSteps(opts.template, opts.templates));
+    runTemplateSteps(tl, readTokens(scope, opts.duration), roleElements(scope),
+                     templateSteps(opts.template, opts.templates));
     // Deliberately no .clearProps()/.reverse() - every engine relies on the
     // timeline holding its final state for the rest of the slide (see
     // gsap_animation_authoring SKILL.md).
@@ -371,7 +559,9 @@
   // seek, and never touches page visibility.
   window.__motionRunSlide = function (rootEl, opts) {
     opts = opts || {};
-    var tl = window.__motionBuildTimeline(rootEl, { template: opts.template, templates: opts.templates });
+    var tl = window.__motionBuildTimeline(rootEl, {
+      template: opts.template, templates: opts.templates, duration: opts.duration,
+    });
     window.__timelines = window.__timelines || {};
     window.__timelines[opts.slideId || "slide"] = tl;
     return tl;
@@ -395,10 +585,12 @@
     if (mode === "seek") {
       tl = window.__motionRunSlide(document, {
         slideId: window.__ANIMATION_SLIDE_ID__, template: window.__ANIMATION_TEMPLATE__,
+        duration: window.__ANIMATION_SLIDE_DURATION__,
       });
     } else {
       tl = window.__motionBuildTimeline(document, {
         template: window.__ANIMATION_TEMPLATE__, paused: sentinelMs > 0,
+        duration: window.__ANIMATION_SLIDE_DURATION__,
       });
     }
 

@@ -64,6 +64,7 @@ def test_render_motion_playwright_end_to_end(tmp_path, monkeypatch, white_backgr
         envelope = render_motion(
             production_path=str(production), translated_deck_dir=str(translated),
             animation_dir=str(anim), slides_dir=str(slides_dir), localization_path=str(localization),
+            engine_name="playwright",
         )
         assert envelope["status"] == "completed"
         motion = json.loads((tmp_path / "out" / "marketing_playwright.motion.json").read_text(encoding="utf-8"))

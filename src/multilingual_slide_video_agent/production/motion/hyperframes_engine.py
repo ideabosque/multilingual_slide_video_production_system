@@ -40,6 +40,7 @@ from multilingual_slide_video_agent.media import ffprobe_duration
 from multilingual_slide_video_agent.production.motion.context import MotionRenderContext
 from multilingual_slide_video_agent.production.motion.errors import MotionError
 from multilingual_slide_video_agent.production.motion.playwright_engine import segment_frame_counts
+from multilingual_slide_video_agent.slides.animation_templates import load_template_config
 from multilingual_slide_video_agent.slides.extract_text import list_slide_files
 
 MIN_NODE_MAJOR = 22
@@ -53,8 +54,10 @@ _INJECTION_RE = re.compile(r"<!-- ANIMATION-OVERRIDE -->.*?<!-- /ANIMATION-OVERR
 
 # Runtime files the index page loads once for every slide: code from the
 # installed package (never a bundle's stale copy - see slides/render.py's
-# _animation_asset_source), per-deck data from the animation bundle.
-_INDEX_ASSETS = ("gsap.min.js", "animation_runtime.js", "templates_config.js", "design_tokens.css")
+# _animation_asset_source) and the deck's design tokens from its bundle.
+# templates_config.js is generated fresh for the configured motion style
+# (see build_project).
+_INDEX_ASSETS = ("gsap.min.js", "animation_runtime.js", "design_tokens.css")
 
 
 def motion_dir() -> Path:
@@ -153,7 +156,9 @@ def _sanitize_css(css: str) -> str:
     return css.replace("<", "\\3C ")
 
 
-def slide_to_template(slide_html: str, *, slide_id: str, template: str, width: int, height: int) -> tuple[str, int]:
+def slide_to_template(
+    slide_html: str, *, slide_id: str, template: str, width: int, height: int, duration: float = 0.0,
+) -> tuple[str, int]:
     """Convert one translated slide (a full HTML document) into a
     HyperFrames sub-composition: a single bare `<template>` whose root
     carries the slide's styles, its body content, and a script that builds
@@ -194,7 +199,7 @@ def slide_to_template(slide_html: str, *, slide_id: str, template: str, width: i
         f'<div data-motion-slide-body{wrapper_attrs} style="{wrapper_style}">{content}</div>\n'
         "<script>\n"
         f'  window.__motionRunSlide(document.querySelector(\'[data-composition-id="{slide_id}"]\'),\n'
-        f"    {{ slideId: {json.dumps(slide_id)}, template: {json.dumps(template)} }});\n"
+        f"    {{ slideId: {json.dumps(slide_id)}, template: {json.dumps(template)}, duration: {duration:.6f} }});\n"
         "</script>\n"
         "</div>\n"
         "</template>\n"
@@ -236,6 +241,14 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
         stale.unlink()
     for name in _INDEX_ASSETS:
         shutil.copy2(_animation_asset_source(ctx.animation_dir, name), project_dir / name)
+    # The template definitions are project config, not per-deck data: a
+    # bundle carries a snapshot from when it was generated, and it can't
+    # know which motion style this render uses.
+    style = str(ctx.motion_config.get("animation_style", "calm"))
+    (project_dir / "templates_config.js").write_text(
+        "window.__ANIMATION_TEMPLATES__ = " + json.dumps(load_template_config(style), ensure_ascii=False) + ";",
+        encoding="utf-8",
+    )
     compositions = project_dir / "compositions"
     compositions.mkdir(exist_ok=True)
 
@@ -260,7 +273,7 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
                 raise MotionError(f"no translated slide file for '{cid}' in {ctx.translated_deck_dir}")
             html, dropped = slide_to_template(
                 source.read_text(encoding="utf-8"), slide_id=cid, template=template_by_slide[cid],
-                width=width, height=height,
+                width=width, height=height, duration=frames / ctx.fps,
             )
             (compositions / f"{cid}.html").write_text(html, encoding="utf-8")
             if dropped:
@@ -291,7 +304,8 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
         "</body>\n</html>\n"
     )
     (project_dir / "index.html").write_text(index, encoding="utf-8")
-    return {"total_frames": start_frame, "width": width, "height": height, "dropped_scripts": dropped_scripts}
+    return {"total_frames": start_frame, "width": width, "height": height, "animation_style": style,
+            "dropped_scripts": dropped_scripts}
 
 
 def _frame_count(path: Path) -> int:

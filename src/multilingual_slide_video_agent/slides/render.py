@@ -119,6 +119,7 @@ def _animation_asset_source(animation_dir: Path, name: str) -> Path:
 def _inject_animation_assets(
     translated_deck_dir: Path, animation_dir: Path, template_by_slide: dict[str, str],
     motion_mode: str = "live", capture_sentinel_ms: int = 0,
+    durations_by_slide_id: dict[str, float] | None = None,
 ) -> None:
     """Copy the deck's pre-generated animation bundle into the translated
     deck directory and inject the <script>/<link> tags each slide needs,
@@ -180,6 +181,10 @@ def _inject_animation_assets(
                 if motion_mode == "seek"
                 else (f"window.__CAPTURE_SENTINEL_MS__={int(capture_sentinel_ms)};" if sentinel else "")
             )
+            # The slide's real on-screen length, which beat positions and
+            # the ambient/exit effects are laid out against.
+            + (f"window.__ANIMATION_SLIDE_DURATION__={float(durations_by_slide_id[slide_id]):.6f};"
+               if durations_by_slide_id and slide_id in durations_by_slide_id else "")
             + '</script>\n'
             '<script src="templates_config.js"></script>\n'
             '<script src="gsap.min.js"></script>\n'
@@ -197,6 +202,7 @@ def render_deck_animation_clips(
     out_dir: str | Path,
     durations_by_slide_id: dict[str, float],
     viewport: str = "1920x1080",
+    animation_style: str | None = None,
 ) -> dict[str, Any]:
     """Inject `animation_dir`'s GSAP bundle into a scratch copy of
     `translated_deck_dir` (under `out_dir`, so capture-only state such as
@@ -230,7 +236,18 @@ def render_deck_animation_clips(
     shutil.copytree(deck_path, capture_deck)
     _inject_animation_assets(
         capture_deck, animation_path, template_by_slide, capture_sentinel_ms=CAPTURE_SENTINEL_MS,
+        durations_by_slide_id=durations_by_slide_id,
     )
+    if animation_style is not None:
+        # Template definitions are project config: render with the
+        # configured motion style, not the bundle's snapshot.
+        from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+
+        (capture_deck / "templates_config.js").write_text(
+            "window.__ANIMATION_TEMPLATES__ = "
+            + json.dumps(load_template_config(animation_style), ensure_ascii=False) + ";",
+            encoding="utf-8",
+        )
     deck_path = capture_deck
 
     slide_files = list_slide_files(deck_path)

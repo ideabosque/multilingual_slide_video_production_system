@@ -3,18 +3,12 @@
 Status: **Phases 0 and 1 implemented** (Phase 0 committed on
 `feature/phase0-hardening`; Phase 1, the engine seam, on
 `feature/phase1-engine-seam`, including the review fixes below). **Phase 2a
-(HyperFrames spike) done; results are in B4.** **Phase 2b (HyperFrames
-engine) in progress:**
-- done:
-  - per-slide runtime entry points (`__motionBuildTimeline`,
-    `__motionRunSlide`) with role resolution scoped to a slide root;
-  - `production/motion/hyperframes_engine.py` (slide → sub-composition
-    conversion, project build with frame-exact clip timing, `check` then
-    `render` with telemetry off, frame-count check, scale to the output
-    resolution);
-  - `render-motion --engine hyperframes`;
-- remaining: the real-deck render in English and one CJK language, the
-  side-by-side comparison with the Playwright baseline, and the docs.
+(HyperFrames spike) done; results are in B4.** **Phase 2b (HyperFrames engine) built:** per-slide runtime entry points,
+`hyperframes_engine.py`, `render-motion --engine hyperframes`. The 14-slide
+reference deck renders cleanly (frame-exact, every slide passes, about real
+time). **Direction changed 2026-10-22: animation-first, playful style (Part
+D).** D1 (the playful style) is built and has a 4-slide sample; D2 (one-pass
+production pipeline) is next.
 
 Phases 3–8 approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
@@ -991,6 +985,86 @@ Not in v1. The recommendation is to see what the language can't express in
 real decks first (Open decision D5).
 
 ---
+
+## Part D — Animation-first production with a playful style (decided 2026-10-22)
+
+**Decision.** The animated video becomes the production output, rendered in
+one pass, and its motion style becomes playful. This supersedes Open
+decision D3 ("motion for the canonical video, later") and the earlier
+plan's §5 Decisions 0 and 2 (motion as a side artifact rendered after a
+static slideshow). The reasons given: the two-pass flow (static video first,
+animation second) is unwanted, and the calm animation looked dull.
+
+**GSAP stays.** It is the animation library HyperFrames renders: HyperFrames
+seeks paused GSAP timelines frame by frame. Remotion in deck-faithful mode
+seeks the same timelines. The dull look came from the calm template set
+(brand ease-out only, a half-second fade, then a static hold for the rest
+of a 30–40s slide), not from GSAP. What retires is the Playwright
+live-capture engine, which becomes a fallback.
+
+### D1. Playful motion style (built)
+
+- `config/animation_templates_playful.yaml`: the same 8 template names as
+  the calm set, selected by `animation_style: playful` in
+  `config/motion.yaml`.
+- New seek-safe effects in `animation_runtime.js`:
+  - `pop`: springy scale-in;
+  - `words`: kinetic headline, word by word, or character by character for
+    CJK;
+  - `beats`: items pop in across the narration, with the first item within
+    1.2s;
+  - `float`: gentle ambient bob;
+  - `drift`: slow push-in on the whole slide;
+  - `exit`: fade-up before the cut;
+  - `count_up` with a springy entrance.
+- `beat:<fraction>` positions, laid out against each slide's real duration,
+  which both engines now pass to the runtime.
+- Only the first entrance step claims an element. This prevents the GSAP
+  double-`.from()` bug that leaves an element invisible.
+- Both engines generate `templates_config.js` from config for the
+  configured style, instead of the bundle's snapshot.
+- Validation:
+  - checks 2 and 3 use each slide's settled frame, 0.6s before the cut,
+    because a playful slide ends on its exit;
+  - "blank" means near-zero content pixels, not a low stddev, which misread
+    small text on white.
+- **Sample:** 4 real slides of `run-20260911-002` (title, diagram, stat,
+  `h3` cards) rendered with HyperFrames in 210s for 152s of video; validation
+  passes. Output: `output/run-20260911-002/en-US/playful_sample/`.
+- **Known gap:** `drift` changes every frame slightly, so check 3 ("did
+  anything animate") passes even on a slide whose content steps resolved
+  nothing. Add a static check that each slide has at least one content
+  step resolving (via `extract-roles`) before relying on check 3 for the
+  playful style.
+
+### D2. One-pass production pipeline (next)
+
+1. **Narration as its own step.** Factor TTS and slide timing out of
+   `render_slideshow.py` into `msv production narrate`. It writes
+   `production.json` (`segment_timing`, segment audio, narration track)
+   without rendering any video. This is the decoupling the earlier plan's
+   Decision 0 rejected at the time.
+2. **Stage order** becomes `analysis → translation → tts → rendering →
+   validation → publishing`. `rendering` is `render-motion` (default engine
+   HyperFrames), producing the language's video directly. `render-slideshow`
+   stays as a fallback command, not a stage.
+3. **Title card** rendered as an animated HyperFrames composition from slide
+   1's markup, instead of the static `slide_001.png`.
+4. **Static screenshots** are still needed for the slide-analysis step's
+   view of the original deck. Translated-deck screenshots are no longer
+   needed for production.
+5. **Skills:** update `slideshow_production` and
+   `slideshow_video_production` for the new step order. Publishing uploads
+   the animated video.
+6. **Migration:** existing runs keep their state; new runs use the new
+   order. `pipeline validate` flags a run created with the old order.
+
+### D3. Then
+
+- Tune the playful templates on feedback from the sample, then render the
+  full reference deck in English and one CJK language.
+- Part C (Claude designs each deck's motion) builds on this vocabulary.
+- Remotion (Phase 3) is unchanged.
 
 ## Phased plan
 

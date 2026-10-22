@@ -296,6 +296,7 @@ class PlaywrightEngine:
                 out_dir=str(work_dir / "capture"),
                 durations_by_slide_id=durations_by_slide_id,
                 viewport=ctx.viewport,
+                animation_style=str(ctx.motion_config.get("animation_style", "calm")),
             )
         except AnimationCaptureError as e:
             # Same event name the previous monolithic renderer logged, so
