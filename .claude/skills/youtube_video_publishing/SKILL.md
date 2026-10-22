@@ -142,13 +142,21 @@ and the client secrets file itself is git-ignored.
   **not** re-run — the existing video and narration are still valid, only
   the publishing stage is retried, optionally after correcting
   `metadata_<language>.json`.
-- A rerun should reuse the already-uploaded video if
-  `publication_<language>.json` shows `status: "published"` with a
-  `youtube_video_id` already — Agent 4 should treat re-publishing as a
+- A rerun should reuse the already-uploaded video only if the language's
+  entry in **pipeline state** (`msv pipeline status`) still has a
+  `youtube_video_id`. In that case Agent 4 should treat re-publishing as a
   metadata-only update rather than uploading a duplicate video. Pass
-  `--existing-video-id <id>` to `msv publishing upload` in that case; it
-  calls `videos().update` instead of `videos().insert()` and skips the
-  media upload entirely.
+  `--existing-video-id <id>` to `msv publishing upload`; it calls
+  `videos().update` instead of `videos().insert()` and skips the media
+  upload entirely.
+  - Pipeline state keeps that id only when `publishing` alone was rerun.
+  - Rerunning any earlier stage re-renders the video file, and YouTube
+    can't replace an uploaded file. So state moves the old id into
+    `previous_youtube_videos`, and the next publish must be a fresh upload.
+  - Don't read the id from an old `publication_<language>.json` in that
+    case: it would update metadata on the superseded video.
+  - Tell the human that `previous_youtube_videos` lists uploads they may
+    want to unlist or delete. Never delete them automatically.
 
 ## Handoff contract
 

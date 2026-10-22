@@ -6,7 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from multilingual_slide_video_agent.state import PipelineState
+from multilingual_slide_video_agent.state import PipelineState, fingerprints_comparable
 
 
 def _ffprobe_ok(path: Path) -> bool:
@@ -58,17 +58,26 @@ def validate_production(
             errors.append(f"slides missing from rendered output: {sorted(missing)}")
 
         expected_order = [s["slide_id"] for s in sorted(localization.get("segments", []), key=lambda s: s["slide_index"])]
-        if production.get("slides") not in (expected_order, []):
-            if production.get("slides") != expected_order:
-                errors.append(
-                    f"slide order in rendered output ({production.get('slides')}) does not match "
-                    f"slide_index order from the localization input ({expected_order})"
-                )
+        if not missing and production.get("slides") != expected_order:
+            errors.append(
+                f"slide order in rendered output ({production.get('slides')}) does not match "
+                f"slide_index order from the localization input ({expected_order})"
+            )
+
+    if not production.get("slides"):
+        errors.append("production.json lists no rendered slides")
 
     if run_id:
         try:
             state = PipelineState.load(run_id)
-            if production.get("source_deck_fingerprint") != state.source_deck_fingerprint:
+            if not fingerprints_comparable(
+                production.get("source_deck_fingerprint_algo"), state.source_deck_fingerprint_algo
+            ):
+                warnings.append(
+                    "source_deck_fingerprint not checked: this render or run predates the content-based "
+                    "fingerprint (legacy mtime-based value) - re-render to restore the check"
+                )
+            elif production.get("source_deck_fingerprint") != state.source_deck_fingerprint:
                 errors.append(
                     "source_deck_fingerprint mismatch: this video was not rendered from the "
                     "run's registered clean original source deck (possible translated-on-translated build)"

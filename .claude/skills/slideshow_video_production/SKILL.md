@@ -34,9 +34,14 @@ base.
   checked this at the text level; re-verify via `msv slides validate` or
   equivalent before spending, since this is the last checkpoint before
   cost is incurred).
-- If pre-generated per-slide narration audio is supplied
-  (`--audio-dir`), reuse it instead of regenerating it (idempotency /
-  cost control).
+- Narration clips are cached per slide and reused only while still
+  correct (idempotency / cost control).
+  - Each `segments/<slide_id>.mp3` has a sidecar `<slide_id>.json` with a
+    hash of narration text, voice, model and instructions. A mismatch
+    regenerates the clip.
+  - A clip without a sidecar predates this cache. In the default
+    `segments/` folder it is regenerated once; in an explicitly supplied
+    `--audio-dir` it is trusted as pre-generated audio.
 
 ## Responsibilities
 
@@ -145,6 +150,7 @@ output/<run_id>/<language>/
 ├── captions.srt
 ├── captions.ass         # only when burn_in is enabled
 ├── segments/*.mp3        # per-slide narration clips (reusable)
+├── segments/*.json       # per-clip cache key sidecars (narration/voice/model/instructions hash)
 └── production.json
 ```
 

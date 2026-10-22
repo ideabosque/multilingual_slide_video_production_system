@@ -182,11 +182,17 @@ run):
 
 - `msv pipeline init` records a fingerprint of the source deck
   (`multilingual_slide_video_agent.state.directory_fingerprint`, hashed
-  over every file's relative path/size/mtime under the deck directory —
-  every `slide_NNN.html` plus shared `styles.css`/`assets/`);
+  over every file's relative path and contents under the deck directory —
+  every `slide_NNN.html` plus shared `styles.css`/`assets/`). A
+  `git checkout` or copy that only touches timestamps doesn't change it.
   `validate_pipeline` warns if the deck on disk has since changed, so a
   stale resume doesn't silently mix artifacts from two different deck
-  versions.
+  versions. Runs created before content fingerprints (no
+  `source_deck_fingerprint_algo` in state) can't be compared and get a
+  warning instead.
+- Every state mutation (`set-stage`, `rerun-*`, `approve-*`) takes a
+  per-run file lock, so parallel per-language production can't lose
+  another language's update.
 - Every stage's artifacts stay in `state/<run_id>/...` or
   `output/<run_id>/<language>/...`, keyed by run/language/stage — a
   completed stage is never redone by `next_actions` unless explicitly
@@ -202,8 +208,12 @@ run):
 - Changing only the deck's translated HTML (a typo fix, not a narration
   change) does not require re-running TTS: `rerun_stage --stage rendering
   --language zh-TW` re-applies translations and re-screenshots without
-  regenerating narration audio, as long as `--audio-dir` is passed
-  pointing at the existing `segments/` clips.
+  regenerating narration audio. Each `segments/<slide_id>.mp3` has a
+  sidecar `<slide_id>.json` recording a hash of its narration text, voice,
+  model and TTS instructions. A clip is reused when that matches and
+  regenerated when it doesn't, so an edited narration can't silently play
+  stale audio. Only the slides whose narration changed are re-billed
+  (`production.json`'s `regenerated_segments` lists them).
 
 ## Validation criteria
 

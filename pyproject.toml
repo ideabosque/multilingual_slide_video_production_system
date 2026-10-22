@@ -17,6 +17,7 @@ dependencies = [
     "playwright>=1.40.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
+    "filelock>=3.12",
     "google-api-python-client>=2.100.0",
     "google-auth>=2.23.0",
     "google-auth-oauthlib>=1.1.0",
@@ -38,3 +39,6 @@ multilingual_slide_video_agent = ["slides/assets/*", "slides/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "requires_ffmpeg: needs ffmpeg/ffprobe on PATH (skipped otherwise)",
+]

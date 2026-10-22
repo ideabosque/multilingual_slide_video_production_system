@@ -21,7 +21,9 @@ plus a short fixed pause (see `compute_slide_timeline` and SKILL.md's
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import statistics
 import subprocess
 import time
@@ -32,7 +34,8 @@ from multilingual_slide_video_agent import schemas
 from multilingual_slide_video_agent import terminology
 from multilingual_slide_video_agent.logging_utils import RunLogger
 from multilingual_slide_video_agent.media import ffprobe_duration
-from multilingual_slide_video_agent.state import directory_fingerprint
+from multilingual_slide_video_agent.production.captions import ass_escape, concat_quote
+from multilingual_slide_video_agent.state import FINGERPRINT_ALGO, directory_fingerprint
 
 
 class ProductionError(Exception):
@@ -140,26 +143,78 @@ def _write_ass(
     for item in timing:
         start, end = _ass_time(item["start_time"]), _ass_time(item["end_time"])
         if item["kind"] == "title":
-            text = (title or "").replace("\n", "\\N")
+            text = ass_escape(title or "")
             lines.append(f"Dialogue: 1,{start},{end},Title,,0,0,0,,{text}\n")
         else:
-            text = captions_by_slide_id[item["slide_id"]].replace("\n", "\\N")
+            text = ass_escape(captions_by_slide_id[item["slide_id"]])
             lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def _generate_segment_tts(text: str, output: Path, profile: dict, model: str, extra_instructions: str) -> None:
+def _resolve_tts_instructions(profile: dict, extra_instructions: str) -> str:
+    instructions = profile.get("tts_instructions", "").strip()
+    if extra_instructions:
+        instructions = f"{instructions}\n{extra_instructions}".strip()
+    return instructions
+
+
+def tts_cache_key(text: str, voice: str, model: str, instructions: str) -> str:
+    """Everything that changes what a narration clip sounds like. A cached
+    clip is only reused when this matches the key in its sidecar."""
+    payload = json.dumps([text, voice, model, instructions], ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _generate_segment_tts(text: str, output: Path, voice: str, model: str, instructions: str) -> None:
     from openai import OpenAI
 
     api_key = cfg.require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
-    instructions = profile.get("tts_instructions", "").strip()
-    if extra_instructions:
-        instructions = f"{instructions}\n{extra_instructions}".strip()
     with client.audio.speech.with_streaming_response.create(
-        model=model, voice=profile.get("voice", "marin"), input=text, instructions=instructions,
+        model=model, voice=voice, input=text, instructions=instructions,
     ) as response:
         response.stream_to_file(str(output))
+
+
+def _ensure_segment_tts(
+    text: str, seg_audio: Path, profile: dict, model: str, extra_instructions: str, *, trust_unkeyed: bool,
+) -> tuple[str, bool]:
+    """Reuse `seg_audio` only if its sidecar `<slide_id>.json` records the
+    same cache key; otherwise (re)generate it. Returns (key, regenerated).
+
+    A clip with no sidecar predates the cache key. In the default
+    segments/ directory it's regenerated once (it may be stale); in an
+    explicitly supplied --audio-dir it's trusted, since that option's
+    contract is "reuse these pre-generated clips". The filename stays
+    `<slide_id>.mp3` either way - render_marketing_animation.py reads it.
+    """
+    voice = profile.get("voice", "marin")
+    instructions = _resolve_tts_instructions(profile, extra_instructions)
+    key = tts_cache_key(text, voice, model, instructions)
+    meta_path = seg_audio.with_suffix(".json")
+
+    if seg_audio.exists():
+        if meta_path.exists():
+            try:
+                if json.loads(meta_path.read_text(encoding="utf-8")).get("key") == key:
+                    return key, False
+            except (json.JSONDecodeError, OSError):
+                pass
+        elif trust_unkeyed:
+            return key, False
+
+    # Write to a temp name and rename, so a crash mid-download never leaves
+    # a truncated clip that would later look cached.
+    tmp_audio = seg_audio.with_name(f"{seg_audio.stem}.partial{seg_audio.suffix}")
+    _generate_segment_tts(text, tmp_audio, voice, model, instructions)
+    os.replace(tmp_audio, seg_audio)
+    meta_path.write_text(
+        json.dumps({"key": key, "narration": text, "voice": voice, "model": model,
+                    "instructions_sha": hashlib.sha256(instructions.encode("utf-8")).hexdigest()},
+                   indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return key, True
 
 
 def _write_image_concat_list(items: list[tuple[Path, float]], path: Path) -> None:
@@ -168,10 +223,10 @@ def _write_image_concat_list(items: list[tuple[Path, float]], path: Path) -> Non
     quirk where the last `duration` directive is otherwise ignored."""
     lines = []
     for image_path, duration in items:
-        lines.append(f"file '{image_path.as_posix()}'")
+        lines.append(f"file {concat_quote(image_path)}")
         lines.append(f"duration {duration:.3f}")
     if items:
-        lines.append(f"file '{items[-1][0].as_posix()}'")
+        lines.append(f"file {concat_quote(items[-1][0])}")
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -218,7 +273,6 @@ def _build_silent_captioned_video(
         "-g", "1", "-bf", "0",
         str(output),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
     subprocess.run(cmd, check=True, capture_output=True)
     concat_list.unlink(missing_ok=True)
 
@@ -275,8 +329,6 @@ def render_language(
     profile = cfg.language_profile(language)
     model = cfg.languages_config().get("default_tts", {}).get("model", "gpt-4o-mini-tts")
     video_cfg = cfg.video_config()
-    import os
-
     resolution_name = os.getenv("VIDEO_RESOLUTION", "1080p")
     resolution = video_cfg.get("resolutions", {}).get(resolution_name, {"width": 1920, "height": 1080})
 
@@ -313,11 +365,17 @@ def render_language(
 
     t0 = time.time()
     segment_files: list[tuple[dict, Path, float, Path]] = []
+    segment_audio_keys: dict[str, str] = {}
+    regenerated_segments: list[str] = []
     for seg in segments:
         slide_id = seg["slide_id"]
         seg_audio = seg_audio_dir / f"{slide_id}.mp3"
-        if not seg_audio.exists():
-            _generate_segment_tts(seg["narration"], seg_audio, profile, model, extra_instructions)
+        key, regenerated = _ensure_segment_tts(
+            seg["narration"], seg_audio, profile, model, extra_instructions, trust_unkeyed=audio_dir is not None,
+        )
+        segment_audio_keys[slide_id] = key
+        if regenerated:
+            regenerated_segments.append(slide_id)
         dur = ffprobe_duration(str(seg_audio))
         image_path = slides_path / f"{slide_id}.png"
         if not image_path.exists():
@@ -401,7 +459,7 @@ def render_language(
     narration_mp3 = output_path / "narration.mp3"
     concat_list = output_path / "_narration_concat.txt"
     concat_list.write_text(
-        "\n".join(f"file '{p.as_posix()}'" for _s, p, _d, _i in segment_files), encoding="utf-8"
+        "\n".join(f"file {concat_quote(p)}" for _s, p, _d, _i in segment_files), encoding="utf-8"
     )
     subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(narration_mp3)],
@@ -420,7 +478,10 @@ def render_language(
         "title": title,
         "source_deck": str(Path(source_deck).resolve()),
         "source_deck_fingerprint": directory_fingerprint(source_deck),
+        "source_deck_fingerprint_algo": FINGERPRINT_ALGO,
         "narration_audio": str(narration_mp3),
+        "segment_audio_keys": segment_audio_keys,
+        "regenerated_segments": regenerated_segments,
         "captions": str(srt_path),
         "captions_ass": str(ass_path) if ass_path else None,
         "output_video": str(output_video),

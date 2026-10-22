@@ -24,6 +24,7 @@ from pathlib import Path
 from multilingual_slide_video_agent import config as cfg
 from multilingual_slide_video_agent.logging_utils import RunLogger
 from multilingual_slide_video_agent.media import ffprobe_duration
+from multilingual_slide_video_agent.production.captions import ass_escape
 from multilingual_slide_video_agent.production.render_slideshow import _ass_time, _srt_time
 from multilingual_slide_video_agent.slides.render import AnimationCaptureError, render_deck_animation_clips
 
@@ -69,7 +70,7 @@ def _write_clip_ass(text: str, duration: float, style: str, profile: dict, video
         "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
     )
     layer = 1 if style == "Title" else 0
-    dialogue = f"Dialogue: {layer},{_ass_time(0.0)},{_ass_time(duration)},{style},,0,0,0,,{text.replace(chr(10), '\\N')}\n"
+    dialogue = f"Dialogue: {layer},{_ass_time(0.0)},{_ass_time(duration)},{style},,0,0,0,,{ass_escape(text)}\n"
     path.write_text(header + dialogue, encoding="utf-8")
 
 

@@ -427,14 +427,14 @@ def pipeline_set_stage(
     """Record one stage's outcome."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
     artifacts = {}
     for pair in artifact:
         key, _, value = pair.partition("=")
         artifacts[key] = value
-    state.set_stage(language, stage, stage_status, artifacts=artifacts or None, error=error, increment_retry=retry)
-    if youtube_video_id:
-        state.set_youtube_result(language, youtube_video_id, youtube_url or "")
+    with PipelineState.transaction(run_id) as state:
+        state.set_stage(language, stage, stage_status, artifacts=artifacts or None, error=error, increment_retry=retry)
+        if youtube_video_id:
+            state.set_youtube_result(language, youtube_video_id, youtube_url or "")
 
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
@@ -454,11 +454,11 @@ def pipeline_rerun_language(run_id: str, language: str, from_stage: str | None) 
     """Reset one language from a given stage onward, then resume."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    if language not in state.languages:
-        _echo_result({"ok": False, "errors": [f"language '{language}' is not part of run '{run_id}'"]})
-        return
-    reset = state.invalidate_from(language, from_stage or "analysis")
+    with PipelineState.transaction(run_id) as state:
+        if language not in state.languages:
+            _echo_result({"ok": False, "errors": [f"language '{language}' is not part of run '{run_id}'"]})
+            return
+        reset = state.invalidate_from(language, from_stage or "analysis")
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         language=language, event="language_rerun_requested", status="completed", reset_stages=reset,
@@ -475,13 +475,13 @@ def pipeline_rerun_stage(run_id: str, stage: str, language: str | None) -> None:
     """Reset one stage, for one language or all languages, then resume."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    language_list = [language] if language else list(state.languages.keys())
-    results = {}
-    for lang in language_list:
-        if lang not in state.languages:
-            continue
-        results[lang] = state.invalidate_from(lang, stage)
+    with PipelineState.transaction(run_id) as state:
+        language_list = [language] if language else list(state.languages.keys())
+        results = {}
+        for lang in language_list:
+            if lang not in state.languages:
+                continue
+            results[lang] = state.invalidate_from(lang, stage)
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         stage=stage, event="stage_rerun_requested", status="completed", languages=language_list,
@@ -499,18 +499,18 @@ def pipeline_approve_production(run_id: str) -> None:
     hasn't finished validation yet - there's nothing to have reviewed."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    default_status = state.language_status(state.default_language)
-    if default_status not in {"ready_for_review", "completed"}:
-        _echo_result({
-            "ok": False,
-            "errors": [
-                f"default language '{state.default_language}' has status '{default_status}', not yet "
-                "ready_for_review/completed - nothing to approve yet"
-            ],
-        })
-        return
-    state.approve_production()
+    with PipelineState.transaction(run_id) as state:
+        default_status = state.language_status(state.default_language)
+        if default_status not in {"ready_for_review", "completed"}:
+            _echo_result({
+                "ok": False,
+                "errors": [
+                    f"default language '{state.default_language}' has status '{default_status}', not yet "
+                    "ready_for_review/completed - nothing to approve yet"
+                ],
+            })
+            return
+        state.approve_production()
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         event="production_approved", status="completed", language=state.default_language,
@@ -526,17 +526,17 @@ def pipeline_approve_publish(run_id: str, languages: str | None) -> None:
     """Human sign-off releasing held publishing stages (publish_pending)."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    language_list = [lang.strip() for lang in languages.split(",")] if languages else list(state.languages.keys())
-    approved, blocked = [], []
-    for lang in language_list:
-        if lang not in state.languages:
-            continue
-        if state.language_status(lang) not in {"ready_for_review", "completed"}:
-            blocked.append(lang)
-            continue
-        state.approve_publish(lang)
-        approved.append(lang)
+    with PipelineState.transaction(run_id) as state:
+        language_list = [lang.strip() for lang in languages.split(",")] if languages else list(state.languages.keys())
+        approved, blocked = [], []
+        for lang in language_list:
+            if lang not in state.languages:
+                continue
+            if state.language_status(lang) not in {"ready_for_review", "completed"}:
+                blocked.append(lang)
+                continue
+            state.approve_publish(lang)
+            approved.append(lang)
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         event="publish_approved", status="completed", languages=approved,
@@ -549,7 +549,7 @@ def pipeline_approve_publish(run_id: str, languages: str | None) -> None:
 @handle_errors
 def pipeline_validate(run_id: str) -> None:
     """validate_pipeline: consistency checks over run state."""
-    from multilingual_slide_video_agent.state import directory_fingerprint
+    from multilingual_slide_video_agent.state import FINGERPRINT_ALGO, directory_fingerprint, fingerprints_comparable
     from pathlib import Path as _Path
 
     state = PipelineState.load(run_id)
@@ -561,7 +561,12 @@ def pipeline_validate(run_id: str) -> None:
         errors.append(f"registered source deck no longer exists: {source}")
     else:
         current_fp = directory_fingerprint(source)
-        if current_fp != state.source_deck_fingerprint:
+        if not fingerprints_comparable(state.source_deck_fingerprint_algo, FINGERPRINT_ALGO):
+            warnings.append(
+                "run was created with the legacy mtime-based deck fingerprint, which can't be compared "
+                "with the current content fingerprint - start a new run to get source-change detection"
+            )
+        elif current_fp != state.source_deck_fingerprint:
             warnings.append(
                 "source deck content has changed since this run started "
                 f"(was {state.source_deck_fingerprint}, now {current_fp}) — "

@@ -22,13 +22,23 @@ import json
 import os
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from multilingual_slide_video_agent.config import state_dir
 
-STAGES = ["analysis", "translation", "rendering", "tts", "validation", "publishing"]
+# Identifies how `directory_fingerprint` is computed. Records without it
+# were fingerprinted from file mtimes, which can't be compared against a
+# content fingerprint - see `fingerprints_comparable`.
+FINGERPRINT_ALGO = "content-v1"
+
+# How long a state mutation waits for another process's lock on the same
+# run before failing loudly (parallel language rollout contends here).
+_LOCK_TIMEOUT_SECONDS = 30
+
+STAGES =["analysis", "translation", "rendering", "tts", "validation", "publishing"]
 TERMINAL_OK_STATUSES = {"completed", "skipped"}
 STAGE_STATUSES = {"pending", "in_progress", "completed", "failed", "skipped", "ready_for_review"}
 
@@ -45,20 +55,32 @@ def _now() -> str:
 
 def directory_fingerprint(path: str | Path) -> str:
     """Content fingerprint used to detect a changed source deck (README
-    "Idempotency and artifact reuse"). Hashes every file's relative path,
-    size, and mtime under the deck directory - cheap and still changes
-    whenever any slide/asset is genuinely edited, added, or removed,
-    without reading every file's full bytes on every state check."""
+    "Idempotency and artifact reuse"). Hashes every file's relative path
+    and full bytes under the deck directory, so it changes exactly when a
+    slide/asset is edited, added, removed, or renamed - and not when a
+    `git checkout`/copy merely touches mtimes (the previous mtime-based
+    version reported false "deck changed" mismatches). Decks are small, so
+    reading every byte is cheap."""
     p = Path(path)
     if not p.is_dir():
         return ""
     h = hashlib.sha256()
     for file_path in sorted(p.rglob("*")):
         if file_path.is_file():
-            stat = file_path.stat()
             rel = file_path.relative_to(p).as_posix()
-            h.update(f"{rel}:{stat.st_size}:{stat.st_mtime_ns}\n".encode("utf-8"))
+            h.update(f"{rel}\0".encode("utf-8"))
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            h.update(b"\0")
     return h.hexdigest()[:16]
+
+
+def fingerprints_comparable(algo_a: str | None, algo_b: str | None) -> bool:
+    """Two recorded fingerprints can only be compared if both were made by
+    the current algorithm. A legacy (mtime-based, no algo recorded) value
+    can't prove or disprove a content change."""
+    return algo_a == FINGERPRINT_ALGO and algo_b == FINGERPRINT_ALGO
 
 
 def text_fingerprint(text: str) -> str:
@@ -87,6 +109,7 @@ class PipelineState:
     source_deck: str
     source_deck_fingerprint: str
     languages: dict[str, Any] = field(default_factory=dict)
+    source_deck_fingerprint_algo: str | None = FINGERPRINT_ALGO
     auto_publish: bool = False
     default_language: str = "en-US"
     auto_approve_production: bool = False
@@ -139,6 +162,7 @@ class PipelineState:
             project_id=data["project_id"],
             source_deck=data["source_deck"],
             source_deck_fingerprint=data.get("source_deck_fingerprint", ""),
+            source_deck_fingerprint_algo=data.get("source_deck_fingerprint_algo"),
             languages=data.get("languages", {}),
             auto_publish=data.get("auto_publish", False),
             default_language=data.get("default_language", "en-US"),
@@ -149,6 +173,33 @@ class PipelineState:
             skill_versions=data.get("skill_versions", {}),
         )
         return state
+
+    @classmethod
+    @contextmanager
+    def transaction(cls, run_id: str) -> Iterator["PipelineState"]:
+        """Load, mutate, and save one run's state under an exclusive
+        cross-process lock. Every mutating CLI command goes through this:
+        language rollout runs per-language production in parallel, and a
+        plain load()-mutate-save() lets the last writer silently discard
+        another language's concurrent stage update (atomic replace only
+        prevents a corrupt file, not a lost update)."""
+        from filelock import FileLock, Timeout
+
+        state_dir().mkdir(parents=True, exist_ok=True)
+        lock = FileLock(str(state_dir() / f"{run_id}.json.lock"), timeout=_LOCK_TIMEOUT_SECONDS)
+        try:
+            lock.acquire()
+        except Timeout as e:
+            raise RuntimeError(
+                f"timed out after {_LOCK_TIMEOUT_SECONDS}s waiting for the state lock on run '{run_id}' - "
+                "another msv process is holding it (or crashed holding it; filelock releases on process exit)"
+            ) from e
+        try:
+            state = cls.load(run_id)
+            yield state
+            state.save()
+        finally:
+            lock.release()
 
     @classmethod
     def exists(cls, run_id: str) -> bool:
@@ -178,6 +229,7 @@ class PipelineState:
             "project_id": self.project_id,
             "source_deck": self.source_deck,
             "source_deck_fingerprint": self.source_deck_fingerprint,
+            "source_deck_fingerprint_algo": self.source_deck_fingerprint_algo,
             "auto_publish": self.auto_publish,
             "default_language": self.default_language,
             "auto_approve_production": self.auto_approve_production,
@@ -270,9 +322,23 @@ class PipelineState:
             entry["artifacts"] = {}
             entry["error"] = None
             reset.append(stage)
-        if from_stage == "publishing" or STAGES.index("publishing") >= idx:
-            self.languages[language]["youtube_video_id"] = None
-            self.languages[language]["youtube_url"] = None
+        lang_data = self.languages[language]
+        if from_stage != "publishing" and lang_data.get("youtube_video_id"):
+            # An earlier stage reruns, so the video file itself will change
+            # and YouTube can't replace an uploaded video's file - the next
+            # publish must be a fresh upload. Keep the superseded upload on
+            # record (never delete it automatically) so a human can unlist
+            # or remove it. A rerun of `publishing` alone keeps the id, so
+            # the publish agent does a metadata-only update instead of
+            # uploading a duplicate.
+            lang_data.setdefault("previous_youtube_videos", []).append({
+                "youtube_video_id": lang_data["youtube_video_id"],
+                "youtube_url": lang_data.get("youtube_url"),
+                "superseded_at": _now(),
+                "reason": f"rerun from '{from_stage}'",
+            })
+            lang_data["youtube_video_id"] = None
+            lang_data["youtube_url"] = None
         if language == self.default_language and STAGES.index("validation") >= idx:
             # The previously-approved default-language render no longer
             # exists; every other language's `translation` stage re-locks
@@ -404,6 +470,7 @@ class PipelineState:
                     "stages": {s: st["status"] for s, st in data["stages"].items()},
                     "youtube_video_id": data.get("youtube_video_id"),
                     "youtube_url": data.get("youtube_url"),
+                    "previous_youtube_videos": data.get("previous_youtube_videos", []),
                 }
                 for lang, data in self.languages.items()
             },

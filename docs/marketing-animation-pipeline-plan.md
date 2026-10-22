@@ -1,5 +1,9 @@
 # Marketing Animation Pipeline — Development Plan
 
+> **Superseded in part (2026-10-13):** the deferred Remotion path (§4.1a)
+> and the HyperFrames-as-fallback note (§4) are now planned work. See
+> [`motion-engines-and-hardening-plan.md`](motion-engines-and-hardening-plan.md).
+
 Status: **implemented — Phases 0-4 are built and verified end-to-end**
 (real render against both a 2-slide fixture deck and the 13-slide
 `a2a-hermes-agent-docker-gateway-deployment` deck; see "What actually got
