@@ -1,5 +1,5 @@
 """Text-escaping helpers shared by every renderer that writes ffmpeg/libass
-input files (render_slideshow.py, render_marketing_animation.py)."""
+input files (render_slideshow.py, production/motion/post.py)."""
 from __future__ import annotations
 
 from pathlib import Path

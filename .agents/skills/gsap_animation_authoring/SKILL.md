@@ -18,8 +18,8 @@ GSAP timelines for `msv slides generate-animation`
 ## Purpose
 
 When an agent (or `slides/generate_animation.py`'s default heuristic) picks
-a named timeline template for a slide, the actual GSAP code executed inside
-the captured Chromium page must be correct, deterministic, and cheap to
+a named timeline template for a slide, the actual GSAP code that HyperFrames
+seeks frame by frame in headless Chrome must be correct, deterministic, and cheap to
 verify — a silently-broken selector is a worse failure than a script error
 (see `marketing_animation_pipeline_plan.md` §4.1's validation note). This
 skill exists to keep that code disciplined.
@@ -76,7 +76,8 @@ the authoritative field reference; summarized here:
 Adding a sixth template, or changing how a card grid staggers in, is
 normally just a new/edited entry in that YAML file — verified by this
 project's own tests in `tests/test_animation_templates.py` and a real
-Playwright capture smoke test, not by hand-reading JS.
+HyperFrames render (`tests/test_hyperframes_engine.py`), not by
+hand-reading JS.
 
 ## Core GSAP rules for this pipeline
 
@@ -86,8 +87,9 @@ These rules govern the fixed engine and effect primitives in
 
 - **`gsap.timeline()`, not ad hoc `gsap.to()` calls.** Every slide's
   animation is one timeline so its total duration is knowable up front
-  (`timeline.duration()`) — the capture step in `slides/render.py` needs
-  this to decide how long to record.
+  (`timeline.duration()`). Each slide's on-screen length is its narration;
+  the timeline has to fit inside it (beat positions and exits are laid out
+  against the slide's real duration).
 - **Target structural classes, never text content or per-language
   selectors.** `.slide-title`, `.slide-bullets li`, `.slide-diagram` — the
   same principle that makes node-ID translation survive independently of
@@ -106,9 +108,9 @@ These rules govern the fixed engine and effect primitives in
   `opacity`) — never `width`/`height`/`top`/`left` for motion. This is a
   performance rule (transform/opacity are compositor-only, everything else
   triggers layout) that matters even more here than in a normal browser,
-  because Playwright is capturing frames from a headless renderer with no
-  GPU compositor shortcuts to hide layout thrashing — a layout-heavy
-  timeline can visibly stutter in the captured video.
+  because every frame is rendered from a headless browser, and a
+  layout-heavy timeline is slower to render and can reflow text between
+  frames.
 - **Every tween needs an explicit `duration` and `ease`.** Never rely on
   GSAP's bare defaults (`duration: 0.5, ease: "power1.out"`) silently —
   pull both from `config/design_system.yaml: motion` so every deck's
@@ -116,22 +118,20 @@ These rules govern the fixed engine and effect primitives in
   binding" below).
 - **No infinite repeats, no `yoyo`, no scroll-triggered anything.**
   ScrollTrigger, Draggable, and infinite/repeating tweens all assume a live
-  interactive page. This pipeline captures a fixed-length, non-interactive
-  video — a repeating tween would either freeze mid-cycle at an arbitrary
-  captured frame or need external synchronization logic. Every timeline
-  must have a finite, computable end.
+  interactive page. This pipeline renders a fixed-length, non-interactive
+  video. A finite `repeat` + `yoyo` is seek-safe, but the playful style
+  deliberately avoids continuous bobbing (it read as shaking). Every
+  timeline must have a finite, computable end.
 - **Leave elements in their final animated state — don't `clearProps` or
-  reverse.** The capture step relies on this: it plays the timeline once,
-  then keeps recording for the slide's full narration-driven duration
-  (§4.1's "hold" phase happens for free because GSAP just leaves
-  transform/opacity at their end values once the timeline completes,
-  unless code explicitly reverts them). Calling `.clearProps()` or
-  `.reverse()` at the end of a timeline breaks this "hold" assumption and
-  will visibly snap the slide back to its pre-animation state partway
-  through the recording.
+  reverse.** A slide holds its final animated state for the rest of its
+  narration-driven duration for free, because GSAP leaves transform/
+  opacity at their end values once the timeline completes. Calling
+  `.clearProps()` or `.reverse()` breaks that and snaps the slide back to
+  its pre-animation state mid-slide. (The playful `exit` effect is the one
+  deliberate exception: a fade just before the cut.)
 - **Must render correctly when seeked, not only when played.** Seek mode
   (`window.__MOTION_MODE__ = "seek"`) builds the same timeline paused and a
-  renderer seeks it frame by frame, as HyperFrames will.
+  renderer seeks it frame by frame, as HyperFrames does for every video.
   - **Never write the DOM from `onUpdate` (or any callback).** GSAP's
     `seek()` suppresses callbacks by default, so a callback-driven effect
     silently never changes under a seeking renderer; this is how
@@ -148,8 +148,8 @@ These rules govern the fixed engine and effect primitives in
 - **No external asset loads inside the timeline's own logic.** Fonts and
   the GSAP library itself load once, before the timeline starts (see
   "Injection point" below) — a tween that waits on an image/font load
-  mid-timeline makes the total duration non-deterministic, which breaks
-  the capture step's duration calculation.
+  mid-timeline makes frames depend on load timing, so the same frame could
+  render differently twice.
 
 ## Design system binding
 
@@ -179,52 +179,30 @@ highlight" shot) — everywhere else, stay on `power*.out`.
 
 ## Injection point
 
-Two separate steps, not one — this replaces an earlier, inaccurate draft
-of this section written before Phase 2/3 were actually implemented:
-
 1. **`slides/generate_animation.py`** (`msv slides generate-animation`)
-   writes the reusable bundle once per deck — `animation_runtime.js` (the
-   fixed generic engine + effect primitives, this skill's "how"),
-   `templates_config.js` (`window.__ANIMATION_TEMPLATES__`, the actual
-   per-template step data, generated fresh each time from
-   `config/animation_templates.yaml` — this skill's "what"), the vendored
-   `gsap.min.js`, and `design_tokens.css` (the design-system CSS custom
-   properties) — into `state/<run_id>/analysis/slides/animation/`. It
-   does **not** touch any deck's HTML.
-2. **`slides/render.py`'s `_inject_animation_assets`** (called from
-   `render_deck_animation_clips`, at capture time) copies those four
-   files into that language's already-translated deck directory and
-   injects, before `</head>` in every `slide_NNN.html`:
-   ```html
-   <style>html{visibility:hidden}</style>
-   <link rel="stylesheet" href="design_tokens.css">
-   <script>window.__ANIMATION_TEMPLATE__="feature_callout";</script>
-   <script src="templates_config.js"></script>
-   <script src="gsap.min.js"></script>
-   <script src="animation_runtime.js" defer></script>
-   ```
-   idempotently, by marker comment — the same pattern
-   `slides/cjk_fonts.py` uses for font overrides, so the two don't
-   conflict (CJK font injection runs first if both apply to the same
-   deck). GSAP itself loads from that locally-vendored copy (no CDN —
-   the deck must render identically offline and CI-deterministically).
-   `templates_config.js` and the inline `__ANIMATION_TEMPLATE__` name are
-   both plain (non-`defer`) scripts, so both are guaranteed to run before
-   the deferred `animation_runtime.js` reads them in `run()`.
+   writes the deck's bundle once: `spec.json` (each slide's template),
+   `design_tokens.css` (the design-system CSS custom properties), and a
+   snapshot of the runtime files. It does **not** touch any deck's HTML.
+2. **The HyperFrames engine** (`production/motion/hyperframes_engine.py`)
+   builds one project per language render:
+   - `index.html` loads, once for every slide: GSAP and
+     `animation_runtime.js` from the **installed package** (never a
+     bundle's stale copy), `templates_config.js` generated fresh from the
+     configured style's YAML, and the bundle's `design_tokens.css`;
+   - each translated slide becomes a `<template>` sub-composition whose
+     inline script calls `window.__motionRunSlide(rootEl, {slideId,
+     template, duration})`. That builds the slide's timeline paused,
+     resolving roles inside that slide's root only (all slides share one
+     page), and registers it in `window.__timelines` for HyperFrames to
+     seek.
+3. **`slides/render.py`'s `_inject_animation_assets`** wires a bundle into
+   standalone slide pages (used by `msv slides extract-roles` in seek
+   mode). There, an inline `html{visibility:hidden}` keeps the page
+   invisible until `run()` has applied the timeline's starting values, so
+   the first paint never shows a slide at its final state.
 
-**The inline `html{visibility:hidden}` matters, and isn't optional.**
-Without it, the browser paints the slide at its normal/final CSS state
-for a frame or more before `animation_runtime.js` runs — a visible flash
-at the start of every captured clip (this was shipped, found in real
-output, and fixed — not a theoretical concern). `run()`'s last line,
-`document.documentElement.style.visibility = "visible"`, reveals the
-page synchronously right after the timeline is constructed — GSAP's
-`.from()`/timeline creation applies "from" starting values synchronously,
-before that line runs, so the first visible paint already shows every
-animated element at its starting state. If an effect dynamically creates
-new elements (e.g. `accent_line`'s decorative underline), they inherit
-this same guarantee automatically as long as they're created *inside* the
-effect function `runTemplateSteps` calls, before `run()` returns.
+Effects that create elements (e.g. `accent_line`'s underline) must do so
+inside the effect function, at build time, so every seek sees the same DOM.
 
 ## Self-check before treating a generated timeline as done
 
@@ -233,11 +211,11 @@ effect function `runTemplateSteps` calls, before `run()` returns.
 3. No `ScrollTrigger`/`Draggable`/repeat/yoyo/scroll dependency.
 4. `timeline.duration()` is a finite, sane number (reject anything under
    0.5s as almost certainly a bug, or over ~6s as probably meant to be a
-   "hold," not an entrance animation — holds happen for free via capture
-   duration, not via a longer timeline).
-5. The browser console is silent when the timeline plays (this is
-   mechanically enforced by `slides/render.py`'s capture step, which fails
-   the whole render on any console error — see
-   `marketing_animation_pipeline_plan.md` §4.1's validation note — but
-   check it by eye first; a caught-and-swallowed error inside a `try/catch`
-   would pass that mechanical check while still producing a broken visual).
+   "hold," not an entrance animation — holds happen for free for the rest
+   of the slide's narration, not via a longer timeline).
+5. The timeline builds without a script error (enforced mechanically:
+   HyperFrames' `check` fails the whole render on any slide's script error,
+   naming the slide), but check it by eye first. A caught-and-swallowed
+   error inside a `try/catch` would pass that check while still producing
+   a broken visual; validation's "animation actually happened" check is the
+   backstop.

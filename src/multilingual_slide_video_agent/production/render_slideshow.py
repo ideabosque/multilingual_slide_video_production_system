@@ -186,7 +186,8 @@ def _ensure_segment_tts(
     segments/ directory it's regenerated once (it may be stale); in an
     explicitly supplied --audio-dir it's trusted, since that option's
     contract is "reuse these pre-generated clips". The filename stays
-    `<slide_id>.mp3` either way - render_marketing_animation.py reads it.
+    `<slide_id>.mp3` either way - the motion post-pass reads it from the
+    `segment_audio_dir` recorded in production.json.
     """
     voice = profile.get("voice", "marin")
     instructions = _resolve_tts_instructions(profile, extra_instructions)

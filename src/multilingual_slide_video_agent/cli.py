@@ -254,44 +254,12 @@ def production_validate(production_path: str, localization: str | None, run_id: 
     _echo_result(validate_production(production_path=production_path, localization_path=localization, run_id=run_id))
 
 
-@production.command("render-marketing-animation")
-@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
-@click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
-@click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
-@click.option("--slides-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's rendered slide images, for the title card background (msv slides render-images output)")
-@click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
-@click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
-@click.option("--output-name", default="marketing_animation.mp4", show_default=True)
-@click.option("--viewport", default="1920x1080", show_default=True)
-def production_render_marketing_animation(
-    production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str,
-    localization: str | None, output_dir: str | None, output_name: str, viewport: str,
-) -> None:
-    """Alias for `render-motion --engine playwright` with the legacy marketing_animation.mp4 name (marketing_animation_pipeline_plan §4)."""
-    from multilingual_slide_video_agent.production.motion.errors import MotionError
-    from multilingual_slide_video_agent.production.render_marketing_animation import (
-        render_marketing_animation,
-    )
-
-    try:
-        envelope = render_marketing_animation(
-            production_path=production_path, translated_deck_dir=translated_deck_dir,
-            animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization,
-            output_dir=output_dir, output_name=output_name, viewport=viewport,
-        )
-    except MotionError as e:
-        _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
-        return
-    envelope["ok"] = envelope.get("status") == "completed"
-    _echo_result(envelope)
-
-
 @production.command("render-motion")
-@click.option("--engine", type=click.Choice(["playwright", "hyperframes", "remotion"]), help="Defaults to config/motion.yaml's default_engine")
+@click.option("--engine", type=click.Choice(["hyperframes", "remotion"]), help="Defaults to config/motion.yaml's default_engine")
 @click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
 @click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
 @click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
-@click.option("--slides-dir", type=click.Path(exists=True, file_okay=False), help="Rendered slide images (msv slides render-images); only the playwright engine needs them, for its title card")
+@click.option("--slides-dir", type=click.Path(exists=True, file_okay=False), help="Rendered slide images (msv slides render-images). Optional; the HyperFrames engine does not need them")
 @click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
 @click.option("--roles", "roles_path", type=click.Path(exists=True), help="roles_<language>.json from msv slides extract-roles (optional; the Remotion engine's content contract)")
 @click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
@@ -376,9 +344,7 @@ def motion_doctor() -> None:
 
     from multilingual_slide_video_agent.production.motion import render as motion_render
     from multilingual_slide_video_agent.production.motion.errors import MotionError
-    from multilingual_slide_video_agent.production.motion.playwright_engine import (
-        check_available as playwright_check,
-    )
+    from multilingual_slide_video_agent.slides.render import chromium_available
 
     node_path = shutil.which("node")
     node_version = None
@@ -408,7 +374,7 @@ def motion_doctor() -> None:
                 "present": bool(node_path), "version": node_version,
                 "meets_hyperframes_min": node_major is not None and node_major >= 22,
             },
-            "playwright_chromium": playwright_check(),
+            "playwright_chromium": chromium_available(),
         },
         "engines": engines,
         "remotion_license_reminder": (

@@ -1,12 +1,13 @@
-"""`render_motion` - the engine-seam orchestrator (motion-engines-and-
-hardening-plan B2/B3): builds the MotionRenderContext, picks an engine
-(`config/motion.yaml`'s `default_engine` unless overridden), runs it to an
-exact-length silent video, then applies the one shared post-pass (captions
-+ narration) and B6 validation, writing `motion.json`.
+"""`render_motion` - the `rendering` stage of animation-first production
+(motion-engines-and-hardening-plan B2/Part D): builds the
+MotionRenderContext from a narrated language's production.json, picks an
+engine (`config/motion.yaml`'s `default_engine` unless overridden), runs it
+to an exact-length silent video, then applies the one shared post-pass
+(captions + narration) and B6 validation, writing `<output>.motion.json`
+and recording the video in production.json.
 
-`msv production render-marketing-animation` stays as an alias for
-`render-motion --engine playwright` (B3) - see render_marketing_animation.py,
-now a thin compat wrapper over this module.
+Engines: `hyperframes` (frame-exact, the default). `remotion` is planned
+(Phase 3). The Playwright live-capture engine was retired on 2026-10-22.
 """
 from __future__ import annotations
 
@@ -23,22 +24,18 @@ from multilingual_slide_video_agent.production.motion.errors import MotionError
 from multilingual_slide_video_agent.production.motion import post
 
 
-KNOWN_ENGINE_NAMES = ("playwright", "hyperframes", "remotion")
+KNOWN_ENGINE_NAMES = ("hyperframes", "remotion")
 
 
 def motion_manifest_path(out_dir: Path, output_name: str) -> Path:
     """`<output stem>.motion.json` next to the video it describes, e.g.
-    marketing_playwright.mp4 -> marketing_playwright.motion.json."""
+    video.mp4 -> video.motion.json."""
     return out_dir / f"{Path(output_name).stem}.motion.json"
 
 
 def get_engine(name: str) -> MotionEngine:
     """Resolve an engine name to an instance. `remotion` is built in Phase 3
     and says so loudly here rather than pretending to be selectable."""
-    if name == "playwright":
-        from multilingual_slide_video_agent.production.motion.playwright_engine import PlaywrightEngine
-
-        return PlaywrightEngine()
     if name == "hyperframes":
         from multilingual_slide_video_agent.production.motion.hyperframes_engine import HyperFramesEngine
 
@@ -95,13 +92,10 @@ def render_motion(
     With `record_in_production` (the default), the finished video is
     recorded back into that production.json (`output_video`, duration
     check, engine, manifest), so `msv production validate` and publishing
-    use it. The legacy `render-marketing-animation` alias passes False: it
-    renders a side artifact next to an existing static slideshow.
+    use it. Pass False to render a side artifact without touching it.
 
-    Returns a status envelope whose `outputs` carries the manifest keys the
-    previous monolithic renderer produced, plus the engine/motion.json
-    additions - so the `render-marketing-animation` alias (and every
-    skill/doc reading its output) keeps working unchanged. Raises
+    Returns a status envelope whose `outputs` describe the video, its
+    captions and its motion manifest. Raises
     MotionError (after `motion.json` + logs are written, when validation is
     what failed) - the caller turns that into the standard {"ok": false,
     "errors": [...]} shape.
@@ -119,7 +113,7 @@ def render_motion(
     language, run_id, project_id = ctx.language, ctx.run_id, ctx.project_id
     logger = RunLogger(run_id, project_id)
 
-    engine_name = engine_name or str(ctx.motion_config.get("default_engine", "playwright"))
+    engine_name = engine_name or str(ctx.motion_config.get("default_engine", "hyperframes"))
     engine = get_engine(engine_name)
     missing = engine.check_available()
     if missing:

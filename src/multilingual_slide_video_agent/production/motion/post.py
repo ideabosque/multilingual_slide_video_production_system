@@ -10,10 +10,8 @@ Why audio and captions are here and NOT inside the engines (B2):
 - each engine only has to produce an exact-length silent video, the
   easiest contract to verify (B6 check 1).
 
-Everything here is factored out of the previous monolithic
-`render_marketing_animation.py` (its `_pad_or_trim_audio`, `_write_clip_ass`,
-`_write_srt_from_timing`, `_captions_by_slide_id`) - with one deliberate
-mechanical change: captions are burned with **absolute** cue times over the
+This was factored out of the earlier monolithic animation renderer, with
+one deliberate mechanical change: captions are burned with **absolute** cue times over the
 whole concatenated silent video instead of one single-cue ASS file per
 clip. The old per-clip cues were each `[0, clip_duration]`; since per-item
 cues partition the timeline exactly at the cut points, burning

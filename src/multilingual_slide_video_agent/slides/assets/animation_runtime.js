@@ -26,8 +26,8 @@
   "use strict";
 
   // `scope` (everywhere below) is what role resolution searches: the whole
-  // `document` for a standalone slide page (Playwright capture), or one
-  // slide's root element when several slides share a page (HyperFrames
+  // `document` for a standalone slide page (extract-roles, a deck opened in a
+  // browser), or one slide's root element when several slides share a page (HyperFrames
   // mounts every slide into one document - plan B4's spike).
   function scopeElement(scope) {
     return scope === document ? document.documentElement : scope;
@@ -521,8 +521,9 @@
 
       var effect = EFFECTS[step.effect];
       if (!effect) {
-        // A config-level typo should fail loudly (console error -> capture
-        // step fails the render), not silently skip a beat - see
+        // A config-level typo should fail loudly (a script error, which
+        // HyperFrames' `check` turns into a failed render naming the slide),
+        // not silently skip a beat - see
         // gsap_animation_authoring SKILL.md's self-check.
         throw new Error("Unknown animation effect in templates_config.js: " + step.effect);
       }
@@ -573,23 +574,14 @@
   // slide - are left alone.
   function run() {
     if (window.__ANIMATION_TEMPLATE__ === undefined) return;
-    var mode = window.__MOTION_MODE__ === "seek" ? "seek" : "live";
-    // Live capture with a sentinel (window.__CAPTURE_SENTINEL_MS__, set
-    // only by slides/render.py's capture injection) also starts paused:
-    // the page shows a solid magenta overlay for that long before the
-    // timeline plays, so the recording carries an unambiguous "slide
-    // starts here" marker whatever the deck's own background colour is
-    // (playwright_engine.py's lead-in detection keys on it).
-    var sentinelMs = mode === "live" ? Number(window.__CAPTURE_SENTINEL_MS__ || 0) : 0;
-    var tl;
-    if (mode === "seek") {
-      tl = window.__motionRunSlide(document, {
+    if (window.__MOTION_MODE__ === "seek") {
+      window.__motionRunSlide(document, {
         slideId: window.__ANIMATION_SLIDE_ID__, template: window.__ANIMATION_TEMPLATE__,
         duration: window.__ANIMATION_SLIDE_DURATION__,
       });
     } else {
-      tl = window.__motionBuildTimeline(document, {
-        template: window.__ANIMATION_TEMPLATE__, paused: sentinelMs > 0,
+      window.__motionBuildTimeline(document, {
+        template: window.__ANIMATION_TEMPLATE__, paused: false,
         duration: window.__ANIMATION_SLIDE_DURATION__,
       });
     }
@@ -598,25 +590,11 @@
     // injected alongside this script) until this point, so the browser's
     // first paint already shows every animated element at its GSAP "from"
     // state - gsap.from()/timeline construction applies those starting
-    // values synchronously, before this line runs. Without this, the page
-    // would paint once at its normal (post-animation) CSS state, then jump
-    // to the animation's start a frame later - a visible white/default
-    // flash at the start of every captured clip (confirmed in production
-    // output, not just theoretical - see marketing_animation_pipeline_plan.md).
-    var reveal = function () {
-      document.documentElement.setAttribute("data-motion-revealed", "");
-      document.documentElement.style.visibility = "visible";
-      if (sentinelMs > 0) tl.play(0);
-    };
-    if (sentinelMs > 0) {
-      // Two frames first so the sentinel is actually painted (and
-      // recorded) before the hold starts counting.
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () { setTimeout(reveal, sentinelMs); });
-      });
-    } else {
-      reveal();
-    }
+    // values synchronously, before this line runs. Without it, the page
+    // would paint once at its final CSS state, then jump to the animation's
+    // start a frame later.
+    document.documentElement.setAttribute("data-motion-revealed", "");
+    document.documentElement.style.visibility = "visible";
   }
 
   if (document.readyState === "loading") {

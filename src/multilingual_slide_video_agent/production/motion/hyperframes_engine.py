@@ -4,7 +4,7 @@ recording it live.
 
 Every slide becomes a HyperFrames sub-composition and the whole video one
 project; HyperFrames seeks each slide's paused GSAP timeline to every frame
-before capturing it, so there is no wall clock, no capture sentinel and no
+before capturing it, so there is no wall clock, no live recording and no
 lead-in to trim. What the Phase 2a spike established and this module relies
 on (plan B4's results table):
 
@@ -39,7 +39,7 @@ from multilingual_slide_video_agent import config as cfg
 from multilingual_slide_video_agent.media import ffprobe_duration
 from multilingual_slide_video_agent.production.motion.context import MotionRenderContext
 from multilingual_slide_video_agent.production.motion.errors import MotionError
-from multilingual_slide_video_agent.production.motion.playwright_engine import segment_frame_counts
+from multilingual_slide_video_agent.production.motion.assembly import segment_frame_counts
 from multilingual_slide_video_agent.slides.animation_templates import load_template_config
 from multilingual_slide_video_agent.slides.extract_text import list_slide_files
 
@@ -224,8 +224,8 @@ TITLE_BACKDROP_CSS = "#root [data-motion-slide-body] { filter: blur(7px) brightn
 def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
     """Write the HyperFrames project for one language into `project_dir`.
     Clip boundaries are whole frames rounded from the absolute timeline -
-    the same `segment_frame_counts` the Playwright engine uses - so both
-    engines cut every slide on the same frame."""
+    the same `segment_frame_counts` validation relies on, so every slide is cut
+    on the frame validation expects."""
     from multilingual_slide_video_agent.slides.render import _animation_asset_source
 
     width, height = _parse_viewport(ctx.viewport)
@@ -355,7 +355,7 @@ class HyperFramesEngine:
             return raw
 
         # The deck is authored at the viewport size; scale once to the
-        # output resolution (the Playwright engine does the same per segment).
+        # output resolution.
         silent = work_dir / "silent.mp4"
         subprocess.run([
             "ffmpeg", "-y", "-loglevel", "error", "-i", str(raw),

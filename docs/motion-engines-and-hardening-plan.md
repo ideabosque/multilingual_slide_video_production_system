@@ -13,10 +13,24 @@ landed objects don't shake (no ambient float, no elastic wobble). D2
 `render-motion` (rendering) records the animated `video.mp4` in
 production.json; stage order is now tts before rendering; HyperFrames'
 title card is animated from slide 1's markup; skills and README updated.
-Both review gates are unchanged (requested 2026-10-22). Remaining in D2: a
-full real-deck one-pass run.
+Both review gates are unchanged (requested 2026-10-22). Verified on the
+full real deck in English (14 slides, 9:57, validation passing, narration on
+every slide - a first run was silent because the render didn't know where
+`--audio-dir` clips were; fixed by recording `segment_audio_dir` and failing
+on a missing clip, plus a new audio check in validation).
 
-Phases 3–8 approved, not started. Open
+**Also done 2026-10-22:**
+- any rerun withdraws publish approval;
+- `CLAUDE.md` imports `AGENTS.md`;
+- the playful stat template no longer gives number-less slides a plain
+  headline;
+- **the Playwright live-capture engine is retired** (Phase 8's first item):
+  live capture, the capture sentinel, lead-in detection,
+  `render-marketing-animation` and their tests are removed. The generic
+  exact-frame assembly moved to `production/motion/assembly.py`. HyperFrames
+  is the only animated engine; the static slideshow remains the fallback.
+
+Phases 3–7 and the rest of 8 are approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 

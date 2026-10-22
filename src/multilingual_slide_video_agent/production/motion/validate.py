@@ -10,22 +10,19 @@ Checks:
 1. **Duration** - the silent video's duration equals `ctx.total_duration`
    within one frame (the engine's own contract, re-verified here), and the
    final video's within `sync.max_duration_drift_seconds`.
-2. **No flash frames at boundaries** - each slide's OWN first and last
-   frame. A surviving magenta capture sentinel
-   always fails; a near-uniform white/black frame fails, naming the slide,
-   unless it's a start frame that simply matches the slide's own background
-   (a white deck before its elements fade in). Guards both regression
-   classes of the flash bugs documented in the earlier plan (intra-slide
-   FOUC and the inter-slide blank lead-in). Runs on the *silent* video, so
-   cue/burn-in content can't mask a blank background.
-3. **Animation actually happened** - each slide's own first and last
+2. **No blank frames** - each slide's OWN first frame and its settled frame
+   (just before any exit). A near-uniform white/black frame fails, naming
+   the slide, unless it's a start frame that simply matches the slide's own
+   background (a white deck before its elements fade in). Runs on the
+   *silent* video, so burned-in captions can't mask a blank slide.
+3. **Animation actually happened** - each slide's own first and settled
    frames must differ by more than a threshold. Catches selectors that
    silently resolve to nothing (the runtime skips an unresolved beat rather
    than throwing - by design - so nothing else would catch it). Also from
    the silent video.
-4. **Engine errors** - the capture step already fails loudly on browser
-   console errors; the validation record carries the post-render list
-   (post-render errors only, e.g. from a lint future engines expose).
+4. **Engine errors** - HyperFrames' `check` already fails the render on a
+   slide's script error, naming the slide; the validation record carries any
+   post-render errors.
 5. **Narration is audible** - every slide's window of the final video peaks
    above `narration_min_peak_db` (a video with silent slides once passed
    every visual check).
@@ -70,17 +67,6 @@ def frame_stats(png_path: Path) -> dict[str, float]:
 # A pixel counts as content when it differs from the frame's background by
 # more than this many gray levels (encoder noise stays within a few).
 CONTENT_PIXEL_DELTA = 24
-
-
-def is_sentinel_frame(png_path: Path) -> bool:
-    """Whether a frame is the live-capture magenta sentinel
-    (slides/render.py's SENTINEL_RGB). Used both to find where captured
-    content starts and to fail a render where a sentinel frame survived the
-    trim - it would be a visible magenta flash."""
-    with Image.open(png_path) as im:
-        rgb = numpy.asarray(im.convert("RGB"), dtype=numpy.float32)
-    r, g, b = (float(rgb[..., c].mean()) for c in range(3))
-    return r >= 200 and b >= 200 and g <= 60
 
 
 def frame_delta(png_a: Path, png_b: Path) -> float:
@@ -201,12 +187,12 @@ def validate_motion(
         )
 
     # --- 2 + 3. per-slide boundary frames (on the silent video) -------------
-    # Each slide's own first and last frame. Engines cut slides on whole
-    # frames rounded from the absolute timeline (round(t * fps), see
-    # playwright_engine.segment_frame_counts), so those frame indices are
-    # known exactly; `-ss` outputs the first frame at or after the seek
-    # point, hence the tiny epsilon below each frame's timestamp. Only the
-    # video's very last slide uses -sseof for its end, because seeking that
+    # Each slide's own first frame and its "settled" frame. Engines cut
+    # slides on whole frames rounded from the absolute timeline
+    # (assembly.segment_frame_counts), so those frame indices are known
+    # exactly; `-ss` outputs the first frame at or after the seek point,
+    # hence the tiny epsilon below each frame's timestamp. Only a settled
+    # frame on the video's very last frame uses -sseof, because seeking that
     # close to the end of the file can decode nothing.
     boundary_checks: list[dict[str, Any]] = []
     animation_checks: list[dict[str, Any]] = []
@@ -214,63 +200,46 @@ def validate_motion(
     epsilon = one_frame / 100
     for slide in ctx.slides:
         start_png = frames_dir / f"boundary_{slide.slide_id}_start.png"
-        end_png = frames_dir / f"boundary_{slide.slide_id}_end.png"
+        settle_png = frames_dir / f"boundary_{slide.slide_id}_settled.png"
         first_frame = round(slide.start * ctx.fps)
         end_frame = round(slide.end * ctx.fps) - 1
         start_at = first_frame / ctx.fps
-        end_at = end_frame / ctx.fps
         extract_frame(silent_video, max(0.0, start_at - epsilon), start_png)
-        if end_frame >= last_frame_index:
-            extract_last_frame(silent_video, end_png)
-        else:
-            extract_frame(silent_video, end_at - epsilon, end_png)
         # The "settled" frame: the slide with everything in, just before any
         # exit animation (the playful style fades each slide out before its
         # cut, so its literal last frame is legitimately empty).
         settle_frame = end_frame - round(thresholds["settle_before_end_seconds"] * ctx.fps)
-        if settle_frame - first_frame >= 2:
-            settle_png = frames_dir / f"boundary_{slide.slide_id}_settled.png"
-            extract_frame(silent_video, settle_frame / ctx.fps - epsilon, settle_png)
+        if settle_frame - first_frame < 2:
+            settle_frame = end_frame
+        if settle_frame >= last_frame_index:
+            extract_last_frame(silent_video, settle_png)
         else:
-            settle_frame, settle_png = end_frame, end_png
+            extract_frame(silent_video, settle_frame / ctx.fps - epsilon, settle_png)
+        settle_at = settle_frame / ctx.fps
         start_stats, settle_stats = frame_stats(start_png), frame_stats(settle_png)
-        end_stats = frame_stats(end_png)
 
-        # Check 2: a surviving capture sentinel (first or last frame) is
-        # always a flash. A blank (near-uniform white/black) START frame is
-        # only a flash when it isn't simply the slide's own background with
-        # every element still at opacity 0 - on a white deck that is exactly
-        # what a correct entrance looks like; the settled frame's median
-        # stands in for the background. A blank SETTLED frame means nothing
-        # is visible once the slide has played in, which is always wrong.
-        start_sentinel, end_sentinel = is_sentinel_frame(start_png), is_sentinel_frame(end_png)
+        # Check 2: a blank (near-uniform white/black) START frame is only a
+        # flash when it isn't simply the slide's own background with every
+        # element still at opacity 0 - on a white deck that is exactly what a
+        # correct entrance looks like; the settled frame's median stands in
+        # for the background. A blank SETTLED frame means nothing is visible
+        # once the slide has played in, which is always wrong.
         start_matches_background = (
             abs(start_stats["mean"] - settle_stats["median"]) <= thresholds["background_match_max_delta"]
         )
-        start_bad = start_sentinel or (is_blank_frame(start_stats, thresholds) and not start_matches_background)
-        settle_blank = is_blank_frame(settle_stats, thresholds)
-        end_bad = end_sentinel or settle_blank
+        start_bad = is_blank_frame(start_stats, thresholds) and not start_matches_background
+        settle_bad = is_blank_frame(settle_stats, thresholds)
         boundary_checks.append({"slide_id": slide.slide_id, "boundary": "start",
-                                "at_seconds": round(start_at, 4), "sentinel": start_sentinel,
-                                **start_stats, "ok": not start_bad})
-        boundary_checks.append({"slide_id": slide.slide_id, "boundary": "end",
-                                "at_seconds": round(end_at, 4), "sentinel": end_sentinel,
-                                "settled_at_seconds": round(settle_frame / ctx.fps, 4),
-                                **settle_stats, "ok": not end_bad})
-        for bad, sentinel, stats, where, at in (
-            (start_bad, start_sentinel, start_stats, "start", start_at),
-            (end_bad, end_sentinel, end_stats if end_sentinel else settle_stats, "end",
-             end_at if end_sentinel else settle_frame / ctx.fps),
-        ):
-            if not bad:
-                continue
-            kind = "capture-sentinel (magenta)" if sentinel else (
-                f"blank {stats['mean']:.0f}-mean/{stats['stddev']:.1f}-stddev"
-            )
-            errors.append(
-                f"{kind} frame at slide '{slide.slide_id}''s {where} boundary (t={at:.3f}s) - the "
-                "flash-bug regression classes from the earlier plan"
-            )
+                                "at_seconds": round(start_at, 4), **start_stats, "ok": not start_bad})
+        boundary_checks.append({"slide_id": slide.slide_id, "boundary": "settled",
+                                "at_seconds": round(settle_at, 4), **settle_stats, "ok": not settle_bad})
+        for bad, stats, where, at in ((start_bad, start_stats, "start", start_at),
+                                      (settle_bad, settle_stats, "settled", settle_at)):
+            if bad:
+                errors.append(
+                    f"blank {stats['mean']:.0f}-mean frame at slide '{slide.slide_id}''s {where} "
+                    f"frame (t={at:.3f}s) - nothing visible where the slide should be"
+                )
 
         # Check 3: the slide's own entrance and settled frames must differ.
         if settle_frame - first_frame < 2:

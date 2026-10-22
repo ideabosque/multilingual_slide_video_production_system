@@ -99,8 +99,13 @@ def test_default_mode_is_live_behaviour():
         page = _new_page(p, seek_mode=False)
         page.wait_for_function("document.documentElement.style.visibility === 'visible'")
         assert page.evaluate("!window.__timelines")            # nothing seek-registered
-        page.wait_for_timeout(900)                             # the live timeline has settled
-        assert page.evaluate(SNAPJS[6:]).replace("title_op", "").count("40%") == 1
+        # The live timeline plays by itself to its final state. Wait for that
+        # rather than a fixed delay: under CPU load GSAP's lag smoothing lets
+        # timeline time fall behind wall-clock time (observed while a
+        # HyperFrames render ran alongside).
+        page.wait_for_function("document.querySelector('.stat').textContent === '40%'"
+                               " && getComputedStyle(document.querySelector('li')).opacity === '1'",
+                               timeout=15000)
         assert json.loads(page.evaluate(SNAPJS[6:]))["stat"] == "40%"
         page.context.close()
 
@@ -190,38 +195,6 @@ def test_count_up_keeps_prefix_suffix_and_source_decimals():
     assert mid.startswith("$") and mid.endswith("M saved")
     assert len(number.split(".")[1]) == 2 and 0 < float(number) < 1.5
 
-
-def test_capture_fails_loudly_on_a_broken_template(tmp_path):
-    """Phase 1 exit criterion: a deliberately broken animation config fails
-    the capture loudly, naming the slide - not a silently-broken video."""
-    from multilingual_slide_video_agent.slides.render import (
-        AnimationCaptureError,
-        render_deck_animation_clips,
-    )
-
-    from motion_fixture_helpers import write_deck
-
-    deck = tmp_path / "deck"
-    write_deck(deck, {"slide_001": "<h1>Alpha</h1><p>body</p>"})
-    anim = tmp_path / "anim"
-    anim.mkdir()
-    shutil.copy2(GSAP, anim / "gsap.min.js")
-    shutil.copy2(RUNTIME, anim / "animation_runtime.js")
-    (anim / "design_tokens.css").write_text("/* minimal */", encoding="utf-8")
-    (anim / "templates_config.js").write_text(
-        "window.__ANIMATION_TEMPLATES__ = "
-        + json.dumps({"feature_callout": {"steps": [
-            {"id": "hdr", "role": "title", "effect": "bogus_effect", "position": 0},
-        ]}}) + ";", encoding="utf-8")
-    (anim / "spec.json").write_text(
-        json.dumps({"slides": [{"slide_id": "slide_001", "template": "feature_callout"}]}),
-        encoding="utf-8")
-
-    with pytest.raises(AnimationCaptureError, match="Unknown animation effect"):
-        render_deck_animation_clips(
-            translated_deck_dir=deck, animation_dir=anim,
-            out_dir=tmp_path / "captures", durations_by_slide_id={"slide_001": 1.0},
-        )
 
 def _seek_page(html, template, times, snap_js):
     """Load `html` with the runtime in seek mode and return snap_js's value

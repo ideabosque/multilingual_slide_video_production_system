@@ -11,7 +11,7 @@ from multilingual_slide_video_agent.media import ffprobe_duration
 from multilingual_slide_video_agent.production.motion import post
 from multilingual_slide_video_agent.production.motion import validate as motion_validate
 from multilingual_slide_video_agent.production.motion.context import MotionRenderContext_from_production
-from multilingual_slide_video_agent.production.motion.playwright_engine import assemble_silent_video
+from multilingual_slide_video_agent.production.motion.assembly import assemble_silent_video
 
 from motion_fixture_helpers import (
     make_minimal_animation_bundle,
@@ -173,18 +173,6 @@ def test_static_middle_slide_fails_the_animation_check(tmp_path, monkeypatch):
     assert validation["ok"] is False and "slide_002" in " ".join(validation["errors"])
 
 
-def test_sentinel_frame_in_middle_slide_fails(tmp_path, monkeypatch):
-    monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
-    ctx = _ctx3(tmp_path)
-    magenta = tmp_path / "magenta.mp4"
-    _lavfi_video(magenta, "color=c=0xFF00FF:s=1280x720:d=2.0")
-    validation = _validate_three(tmp_path, ctx, magenta)
-    bad = [c for c in validation["boundary_checks"] if not c["ok"]]
-    assert {c["slide_id"] for c in bad} == {"slide_002"}
-    assert all(c["sentinel"] for c in bad)
-    assert "capture-sentinel" in " ".join(validation["errors"])
-
-
 def test_white_deck_entrance_from_its_own_background_passes(tmp_path, monkeypatch):
     """A white slide whose content appears after the first frame starts on a
     blank-white frame - that's its own background, not a flash."""
@@ -203,19 +191,19 @@ def test_white_deck_entrance_from_its_own_background_passes(tmp_path, monkeypatc
 def test_assembly_refuses_a_segment_off_by_more_than_one_frame(tmp_path, monkeypatch):
     """A short segment must fail loudly, not be carried into the next
     slide (which would shift every later slide against its narration)."""
-    from multilingual_slide_video_agent.production.motion import playwright_engine
+    from multilingual_slide_video_agent.production.motion import assembly
     from multilingual_slide_video_agent.production.motion.errors import MotionError
 
     monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
     ctx = _ctx3(tmp_path)
-    real_encode = playwright_engine._encode_segment
+    real_encode = assembly._encode_segment
 
     def short_middle(seg, dest, ctx_):
         if seg.get("slide_id") == "slide_002":
             seg = {**seg, "frames": seg["frames"] - 12}
         real_encode(seg, dest, ctx_)
 
-    monkeypatch.setattr(playwright_engine, "_encode_segment", short_middle)
+    monkeypatch.setattr(assembly, "_encode_segment", short_middle)
     src = tmp_path / "a.mp4"
     _lavfi_video(src, SRC_A)
     segments = [
@@ -228,7 +216,7 @@ def test_assembly_refuses_a_segment_off_by_more_than_one_frame(tmp_path, monkeyp
 
 
 def test_segment_frame_counts_round_from_the_absolute_timeline():
-    from multilingual_slide_video_agent.production.motion.playwright_engine import segment_frame_counts
+    from multilingual_slide_video_agent.production.motion.assembly import segment_frame_counts
 
     # 1.0s title then slides of irregular narration-driven lengths
     durations = [1.0, 1.517, 2.483, 0.75, 3.333]

@@ -53,7 +53,10 @@ feature_callout:
 stat_highlight:
   steps:
     - {role: slide, effect: drift, params: {scale: 1.04}}
-    - {role: [stat, title], effect: count_up, position: 0.1, params: {pop: true, scale: 0.1}}
+    # count_up targets `stat` only: falling back to the title (as the calm
+    # style does) gave number-less stat slides a plain scale-in headline
+    # instead of the word-by-word build below.
+    - {role: stat, effect: count_up, position: 0.1, params: {pop: true, scale: 0.1}}
     - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 70, rotation: 12, scale: 0.6, stagger: 0.04}}
     - {role: subtitle, effect: pop, position: "beat:0.06", ease: "back.out(3)", params: {y: 36, scale: 0.4}}
     - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.1, to: 0.4, first_max: 1.0, scale: 0.2, y: 60, rotation: 7}}

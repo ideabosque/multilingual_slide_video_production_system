@@ -123,7 +123,6 @@ def test_render_motion_with_hyperframes_end_to_end(tmp_path, monkeypatch):
     motion = json.loads((out / "video.motion.json").read_text(encoding="utf-8"))
     assert motion["engine"]["name"] == "hyperframes" and motion["engine"]["version"]
     assert motion["validation"]["ok"] is True, motion["validation"]["errors"]
-    assert not any(c["sentinel"] for c in motion["validation"]["boundary_checks"])
     assert (out / "video.mp4").exists()
     # rendering is the production render: the video is recorded in production.json
     production = json.loads(ctx.production_path.read_text(encoding="utf-8"))
@@ -146,3 +145,23 @@ def test_css_comments_mentioning_style_tags_dont_unbalance_the_template():
     assert html.count("<style") == html.count("</style>") == 1
     assert "DO NOT EDIT" not in html                     # comment dropped
     assert r'content: "\3C b>"' in html                  # remaining "<" CSS-escaped
+
+
+@pytest.mark.requires_node
+@pytest.mark.requires_ffmpeg
+def test_a_broken_template_fails_the_render_naming_the_slide(tmp_path, monkeypatch):
+    """A template that throws in the browser (here: an unknown effect) must
+    fail loudly at HyperFrames' `check`, naming the slide - never produce a
+    silently broken video."""
+    if hf.check_available():
+        pytest.skip("; ".join(hf.check_available()))
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+
+    monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("VIDEO_RESOLUTION", "720p")
+    ctx = _ctx(tmp_path, slide_seconds=(1.5, 1.5))
+    broken = {name: {"steps": [{"role": "title", "effect": "bogus_effect"}]} for name in load_template_config("calm")}
+    monkeypatch.setattr(hf, "load_template_config", lambda style: broken)
+    with pytest.raises(MotionError, match=r"(?s)check.*slide_00[12]"):
+        hf.HyperFramesEngine().render(ctx, tmp_path / "engine")

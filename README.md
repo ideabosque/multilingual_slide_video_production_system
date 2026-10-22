@@ -276,15 +276,12 @@ msv production render-motion --production output/<run_id>/<language>/production.
     --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
     --animation-dir state/<run_id>/analysis/slides/animation \
     --localization state/<run_id>/analysis/localization_<language>.json \
-    [--engine hyperframes|playwright] [--output-name video.mp4]
+    [--engine hyperframes] [--output-name video.mp4]
 msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
 # static fallback (explicit request, or motion engine unavailable)
 msv production render-slideshow --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
     --localization ... --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
-# legacy: Playwright-rendered side artifact next to a static slideshow
-msv production render-marketing-animation --production ... --translated-deck-dir ... \
-    --animation-dir ... --slides-dir ... [--localization ...]
 
 msv motion install          # npm ci in motion/ (pinned HyperFrames)
 msv motion doctor           # Node, HyperFrames, ffmpeg, Chromium, per-engine availability
@@ -445,7 +442,7 @@ src/multilingual_slide_video_agent/
     assets/            # animation_runtime.js (the actual GSAP timelines)
     vendor/            # vendored gsap.min.js (see its GSAP_LICENSE.txt)
   production/         # render_slideshow.py: narration (narrate_language) + static fallback
-                      # motion/: animated rendering - HyperFrames/Playwright engines,
+                      # motion/: animated rendering - HyperFrames engine, exact-frame assembly,
                       # shared caption+narration post-pass, validation
   publishing/         # YouTube upload (same shape as the video-source project)
   cli.py            # the `msv` command groups

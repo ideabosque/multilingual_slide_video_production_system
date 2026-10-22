@@ -1,12 +1,10 @@
-"""CLI surface of the motion path: `render-motion`, `motion install`, and the
-legacy wrapper's error type."""
+"""CLI surface of the motion path: `render-motion` and `motion install`."""
 import json
 
 import pytest
 from click.testing import CliRunner
 
 from multilingual_slide_video_agent.cli import main
-from multilingual_slide_video_agent.production import render_marketing_animation as legacy
 from multilingual_slide_video_agent.production.motion.errors import MotionError
 
 
@@ -52,14 +50,3 @@ def test_committed_motion_lockfile_exists():
 
     motion_dir = Path(__file__).resolve().parents[1] / "motion"
     assert (motion_dir / "package-lock.json").exists()
-
-
-def test_legacy_wrapper_raises_its_documented_error(monkeypatch):
-    def failing_render_motion(**_kwargs):
-        raise MotionError("capture failed on slide_001")
-
-    monkeypatch.setattr(legacy, "render_motion", failing_render_motion)
-    with pytest.raises(legacy.MarketingAnimationError, match="slide_001"):
-        legacy.render_marketing_animation(
-            production_path="p.json", translated_deck_dir="d", animation_dir="a", slides_dir="s",
-        )

@@ -54,7 +54,7 @@ class MotionRenderContext:
     production_path: Path
     translated_deck_dir: Path
     animation_dir: Path
-    slides_dir: Path | None                           # rendered slide PNGs; only the playwright engine's title card needs them
+    slides_dir: Path | None                           # rendered slide PNGs; optional, no current engine needs them
     segment_audio_dir: Path
     narration_audio: Path
     design_tokens: dict[str, Any]
@@ -103,10 +103,8 @@ def MotionRenderContext_from_production(
     video_config: dict[str, Any] | None = None,
 ) -> "MotionRenderContext":
     """Build a MotionRenderContext from one already-rendered language's
-    `production.json` plus its animation bundle. Narration/caption paths are
-    resolved the same way the previous monolithic
-    `render_marketing_animation.py` resolved them, so existing run
-    artifacts work unchanged.
+    `production.json` (written by `msv production narrate`) plus its
+    animation bundle.
 
     `roles_path` (from `msv slides extract-roles`; conventionally named
     `roles_<language>.json`) is optional: engines that don't need the

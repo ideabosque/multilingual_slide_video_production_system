@@ -110,9 +110,9 @@ msv motion install                                  # only needed for the Node-b
 - Text written into ffmpeg/libass inputs goes through
   `production/captions.py`: `ass_escape()` for caption text and
   `concat_quote()` for concat-list paths. Don't hand-escape.
-- Don't modify a translated deck in place for capture or analysis. Inject
-  animation assets into a scratch copy, as `render_deck_animation_clips` and
-  `extract_deck_roles` do.
+- Don't modify a translated deck in place for rendering or analysis. Inject
+  animation assets into a scratch copy or a separate project, as
+  `extract_deck_roles` and the HyperFrames engine do.
 
 **Motion engines**
 - Each engine returns an exact-length silent video, and `motion/post.py`

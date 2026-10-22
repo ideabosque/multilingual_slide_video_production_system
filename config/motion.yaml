@@ -8,7 +8,7 @@
 # sign-off, and never to set it to `remotion` without an explicit decision
 # (Remotion's license + the "rebuilt look" are covered by B5).
 
-default_engine: hyperframes  # 2026-10-22: animation-first production (plan Part D); playwright stays as a fallback
+default_engine: hyperframes  # 2026-10-22: animation-first production (plan Part D); the playwright engine is retired
 # Motion style: `calm` (config/animation_templates.yaml - short fades, brand
 # ease-out) or `playful` (config/animation_templates_playful.yaml - springy
 # pops, kinetic headlines, beats across the narration, ambient drift, exits).

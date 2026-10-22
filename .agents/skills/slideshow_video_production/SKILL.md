@@ -186,7 +186,7 @@ The `msv` CLI, groups `msv slides` and `msv production`:
   deck (structure changed since Agent 1 analyzed it).
 - `msv production narrate --run-id ... --project-id ... --language ... --source-deck ... --localization ... --output-dir ...`
   — stage `tts`: narration, timing, captions, production.json (no video).
-- `msv production render-motion --production ... --translated-deck-dir ... --animation-dir ... --localization ... [--engine hyperframes|playwright]`
+- `msv production render-motion --production ... --translated-deck-dir ... --animation-dir ... --localization ... [--engine hyperframes]`
   — stage `rendering`: the animated video, recorded in production.json.
 - `msv motion doctor` — checks Node, HyperFrames, ffmpeg and Chromium.
 - Static fallback: `msv slides render-images --deck-dir <translated_<lang>_dir> --out <rendered_<lang>_dir>`
@@ -297,17 +297,10 @@ deck, then `msv production render-slideshow ... --slides-dir
   a retry after a transient TTS/ffmpeg failure reuses whatever already
   exists rather than regenerating everything.
 
-## Legacy: `render-marketing-animation`
+## Render failures
 
-Before animation-first production, the animated video was an optional side
-artifact rendered *after* a static slideshow. `msv production
-render-marketing-animation` keeps that contract: Playwright engine,
-`marketing_animation.mp4` next to an existing `slideshow.mp4`, and
-`production.json` left unchanged. Don't use it for new runs; `render-motion`
-is the production render.
-
-A browser or composition script error during any render fails it loudly
-and names the slide. That's deliberately not a soft warning: a
+A slide's script error fails the render loudly (HyperFrames' `check` runs
+first) and names the slide. That's deliberately not a soft warning: a
 silently broken animation (e.g. a selector that never matches) isn't
 visible from the output file without frame-by-frame review.
 
