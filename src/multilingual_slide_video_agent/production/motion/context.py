@@ -132,7 +132,13 @@ def MotionRenderContext_from_production(
     narration_audio = Path(production.get("narration_audio", "")).resolve()
     if not narration_audio.parent.exists():
         raise MotionContextError(f"narration_audio's directory not found: {narration_audio.parent}")
-    seg_audio_dir = narration_audio.parent / "segments"
+    # Where narrate actually put (or found) the per-slide clips - it can be
+    # an explicit --audio-dir elsewhere. Older production.json files predate
+    # the field; their clips sit in segments/ next to narration.mp3.
+    seg_audio_dir = (
+        Path(production["segment_audio_dir"]).resolve() if production.get("segment_audio_dir")
+        else narration_audio.parent / "segments"
+    )
 
     animation_path = Path(animation_dir).resolve()
     spec = _load_json(animation_path / "spec.json")

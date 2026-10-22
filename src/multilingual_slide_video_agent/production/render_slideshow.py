@@ -434,6 +434,7 @@ def _narrate(
             "title": title,
             "narration_audio": str(narration_mp3),
             "segment_audio_keys": segment_audio_keys,
+            "segment_audio_dir": str(seg_audio_dir),
             "regenerated_segments": regenerated_segments,
             "captions": str(srt_path),
             "voice": profile.get("voice"),

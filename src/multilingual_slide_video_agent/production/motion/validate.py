@@ -26,6 +26,9 @@ Checks:
 4. **Engine errors** - the capture step already fails loudly on browser
    console errors; the validation record carries the post-render list
    (post-render errors only, e.g. from a lint future engines expose).
+5. **Narration is audible** - every slide's window of the final video peaks
+   above `narration_min_peak_db` (a video with silent slides once passed
+   every visual check).
 
 Frame analysis uses Pillow + numpy on grayscale frames (both in
 pyproject.toml - the earlier plan's Decision 1 trade-off note).
@@ -168,6 +171,7 @@ def validate_motion(
         "animation_min_changed_fraction": 0.0002,
         "background_match_max_delta": 12.0,
         "settle_before_end_seconds": 0.6,
+        "narration_min_peak_db": -40.0,
     }, **(ctx.motion_config.get("validation", {}) or {})}
     one_frame = 1.0 / ctx.fps
     frames_dir = work_dir / "validation_frames"
@@ -288,6 +292,25 @@ def validate_motion(
                 "visibly happened (e.g. every template step resolved to nothing)"
             )
 
+    # --- 5. narration is actually audible (on the final video) --------------
+    # Every slide's window must carry sound: a video with silent slides
+    # passed every visual check once (the narration clips weren't found
+    # and silence was substituted).
+    audio_checks: list[dict[str, Any]] = []
+    if not has_audio_stream(final_video):
+        errors.append("final video has no audio stream - the narration was not muxed")
+    else:
+        floor = thresholds["narration_min_peak_db"]
+        for slide in ctx.slides:
+            peak = audio_peak_db(final_video, slide.start, slide.end - slide.start)
+            ok = peak is not None and peak >= floor
+            audio_checks.append({"slide_id": slide.slide_id, "peak_db": peak, "ok": ok})
+            if not ok:
+                errors.append(
+                    f"slide '{slide.slide_id}' has no audible narration (peak {peak} dB < {floor} dB) - "
+                    "its narration clip is missing or silent"
+                )
+
     return {
         "ok": not errors,
         "errors": errors,
@@ -303,5 +326,32 @@ def validate_motion(
         },
         "boundary_checks": boundary_checks,
         "animation_checks": animation_checks,
+        "audio_checks": audio_checks,
         "engine_errors": list(engine_errors or []),
     }
+
+
+def has_audio_stream(video: Path) -> bool:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type",
+         "-of", "csv=p=0", str(video)],
+        capture_output=True, text=True,
+    ).stdout
+    return "audio" in out
+
+
+def audio_peak_db(video: Path, start: float, duration: float) -> float | None:
+    """Peak level (dBFS) of the soundtrack within [start, start+duration];
+    None when nothing could be measured."""
+    out = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}", "-i", str(video),
+         "-vn", "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stderr
+    for line in out.splitlines():
+        if "max_volume:" in line:
+            try:
+                return float(line.split("max_volume:")[1].split("dB")[0])
+            except ValueError:
+                return None
+    return None

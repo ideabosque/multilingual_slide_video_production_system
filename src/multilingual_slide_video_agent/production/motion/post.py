@@ -184,19 +184,29 @@ def _pad_or_trim_to_wav(src: Path | None, duration: float, dest: Path) -> None:
 
 def build_narration_track(ctx: MotionRenderContext, work_dir: Path) -> Path:
     """Concatenate every timing item's (padded/trimmed) narration clip into
-    one full-length silence-padded track, in `segment_timing` order. The
-    title card and any slide without a segment mp3 contribute silence,
-    matching the previous renderer exactly."""
+    one full-length silence-padded track, in `segment_timing` order. Only
+    the title card is silent.
+
+    A slide whose narration clip is missing fails the render, naming the
+    slide and where it looked. The previous renderer substituted silence,
+    which once produced a complete-looking video with no sound at all
+    (narrate had used an --audio-dir the render didn't know about)."""
     track_dir = work_dir / "narration"
     track_dir.mkdir(parents=True, exist_ok=True)
+    missing = [
+        item["slide_id"] for item in ctx.timing
+        if item.get("kind") == "slide" and not (ctx.segment_audio_dir / f"{item['slide_id']}.mp3").exists()
+    ]
+    if missing:
+        raise MotionPostError(
+            f"narration clip(s) missing for slide(s) {missing} in {ctx.segment_audio_dir} - "
+            "refusing to render a video with silent slides"
+        )
     parts: list[Path] = []
     for i, item in enumerate(ctx.timing):
         duration = item["end_time"] - item["start_time"]
         part = track_dir / f"_track_{i:03d}.wav"
-        src = None
-        if item.get("kind") == "slide":
-            candidate = ctx.segment_audio_dir / f"{item['slide_id']}.mp3"
-            src = candidate if candidate.exists() else None
+        src = ctx.segment_audio_dir / f"{item['slide_id']}.mp3" if item.get("kind") == "slide" else None
         _pad_or_trim_to_wav(src, duration, part)
         parts.append(part)
 

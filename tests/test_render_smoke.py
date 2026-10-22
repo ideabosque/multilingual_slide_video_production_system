@@ -2,6 +2,7 @@
 with TTS stubbed (no API key or network needed)."""
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -122,3 +123,15 @@ def test_narrate_language_writes_timing_and_audio_without_a_video(render_inputs)
     assert production["total_duration_seconds"] == pytest.approx(6.0, abs=0.1)
     assert production["source_deck_fingerprint_algo"]
     assert render_inputs["encodes"] == []   # no slide-video encode at all
+
+
+def test_narrate_records_an_explicit_audio_dir(render_inputs, tmp_path):
+    shared = tmp_path / "shared_clips"
+    render_slideshow.narrate_language(
+        run_id="run-smoke", project_id="proj", language="en-US",
+        source_deck=str(render_inputs["deck"]), localization_path=str(render_inputs["localization"]),
+        output_dir=str(render_inputs["out"]), audio_dir=str(shared),
+    )
+    production = json.loads((render_inputs["out"] / "production.json").read_text(encoding="utf-8"))
+    assert Path(production["segment_audio_dir"]) == shared.resolve()
+    assert (shared / "slide_001.mp3").exists()

@@ -237,3 +237,67 @@ def test_segment_frame_counts_round_from_the_absolute_timeline():
     # boundaries land on the frame nearest each absolute start, so the total
     # never drifts however many slides there are
     assert sum(segment_frame_counts([1.0 / 7] * 700, 30)) == round(100 * 30)
+
+
+# ---------- narration audio: never silently missing ----------
+
+def test_missing_narration_clip_fails_instead_of_rendering_silence(tmp_path, monkeypatch):
+    """A one-pass demo once rendered a complete-looking video with no sound:
+    the clips weren't where the render looked, and silence was substituted."""
+    from multilingual_slide_video_agent.production.motion.post import MotionPostError
+
+    monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
+    ctx = _ctx(tmp_path)
+    (ctx.segment_audio_dir / "slide_002.mp3").unlink()
+    with pytest.raises(MotionPostError, match="slide_002"):
+        post.build_narration_track(ctx, tmp_path / "post")
+
+
+def test_context_uses_the_recorded_segment_audio_dir(tmp_path, monkeypatch):
+    """narrate --audio-dir records where the clips are; the render uses it."""
+    import json as _json
+
+    monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
+    ctx = _ctx(tmp_path)
+    elsewhere = tmp_path / "shared_clips"
+    ctx.segment_audio_dir.rename(elsewhere)
+    production = _json.loads(ctx.production_path.read_text(encoding="utf-8"))
+    production["segment_audio_dir"] = str(elsewhere)
+    ctx.production_path.write_text(_json.dumps(production), encoding="utf-8")
+
+    reloaded = MotionRenderContext_from_production(
+        production_path=ctx.production_path, translated_deck_dir=ctx.translated_deck_dir,
+        animation_dir=ctx.animation_dir, slides_dir=ctx.slides_dir, fps=30,
+    )
+    assert reloaded.segment_audio_dir == elsewhere.resolve()
+    post.build_narration_track(reloaded, tmp_path / "post")   # finds every clip
+
+
+def test_validation_catches_a_silent_slide(tmp_path, monkeypatch):
+    import subprocess
+
+    monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
+    ctx = _ctx(tmp_path)
+    # slide_002's clip is pure silence: everything else about the video is fine
+    silent_clip = ctx.segment_audio_dir / "slide_002.mp3"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "anullsrc=r=44100:cl=stereo:d=0.6", str(silent_clip)], check=True)
+    src_a, src_b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _lavfi_video(src_a, SRC_A)
+    _lavfi_video(src_b, SRC_B)
+    segments = [
+        {"kind": "title", "src": ctx.slides_dir / "slide_001.png",
+         "duration": ctx.title_item["end_time"] - ctx.title_item["start_time"]},
+        {"kind": "slide", "slide_id": "slide_001", "src": src_a, "duration": ctx.slide_by_id("slide_001").duration},
+        {"kind": "slide", "slide_id": "slide_002", "src": src_b, "duration": ctx.slide_by_id("slide_002").duration},
+    ]
+    silent = tmp_path / "silent.mp4"
+    assemble_silent_video(ctx=ctx, segments=segments, work_dir=tmp_path / "assembly", dest=silent)
+    final = tmp_path / "video.mp4"
+    post.burn_and_mux(silent, ctx, tmp_path / "post", {}, final)
+    validation = motion_validate.validate_motion(
+        silent_video=silent, final_video=final, ctx=ctx, work_dir=tmp_path / "validation",
+    )
+    checks = {c["slide_id"]: c["ok"] for c in validation["audio_checks"]}
+    assert checks == {"slide_001": True, "slide_002": False}
+    assert validation["ok"] is False and "no audible narration" in " ".join(validation["errors"])
