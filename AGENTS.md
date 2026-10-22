@@ -6,14 +6,14 @@ how to change the code safely.
 
 ## What this project is
 
-A Python CLI (`msv`) plus Claude Code agents and skills that turn one English
-HTML slide deck into localized, narrated, captioned MP4s and optionally
-publish them to YouTube. The split is deliberate:
+A Python CLI (`msv`) plus agent skills that turn one English HTML slide
+deck into localized, narrated, captioned MP4s and optionally publish them to
+YouTube. The split is deliberate:
 
-- **Judgement lives in the agents and skills** (`.claude/agents/`,
-  `.claude/skills/`): reading slides, translating, writing narration and
-  captions, and drafting YouTube metadata. No Python code calls an LLM; the
-  only model call is OpenAI TTS in `production/render_slideshow.py`.
+- **Judgement lives in the skills** (`.agents/skills/`): reading slides,
+  translating, writing narration and captions, and drafting YouTube
+  metadata. No Python code calls an LLM; the only model call is OpenAI TTS
+  in `production/render_slideshow.py`.
 - **The mechanical work lives in the CLI** (`src/multilingual_slide_video_agent/`):
   text extraction, Chromium rendering, TTS, FFmpeg assembly, YouTube upload,
   and pipeline state.
@@ -30,12 +30,39 @@ src/multilingual_slide_video_agent/
                          motion/ (engine seam: context, engines, post-pass, validation)
   publishing/            YouTube upload / OAuth
 config/                  languages, terminology, video, motion, design system, animation templates
-.claude/agents|skills/   the five agents and their skills
+.agents/skills/          all skills: 5 orchestrator skills + the procedure skills they follow
 docs/                    development plans; the active one is motion-engines-and-hardening-plan.md
 motion/                  pinned Node toolchain for the HyperFrames/Remotion engines
 tests/                   pytest suite
 state/ output/ logs/     runtime data (gitignored)
 ```
+
+## Skills
+
+Every skill lives in `.agents/skills/<dir>/SKILL.md`, a tool-neutral
+location. There are no Claude Code subagent definitions (`.claude/agents/`);
+the former agents are now orchestrator skills.
+
+| Orchestrator skill (entry point, role + dispatch) | Procedure skill it follows |
+|---|---|
+| `pipeline_orchestrator` (start here for a full run) | `slide_video_orchestration` |
+| `slide_analysis` | `slide_deck_localization` |
+| `slideshow_production` | `slideshow_video_production` |
+| `language_rollout` | `multilingual_rollout` |
+| `youtube_publishing` | `youtube_video_publishing` |
+
+`gsap_animation_authoring` and `motion_design_principles` are loaded only
+for template-library maintenance (see `slideshow_production`).
+
+- **Dispatching a skill**, as orchestrator skills describe it, means
+  running it in a subagent when the host supports subagents (pass the
+  skill's `SKILL.md` path and its inputs), otherwise inline.
+- Keep a role's guardrails (approval gates, one language per production
+  run) in its orchestrator skill and the step-by-step procedure in the
+  procedure skill.
+- Python status envelopes and logs still name the roles
+  `slideshow_production_agent` etc. Those are data identifiers, not file
+  references; don't rename them.
 
 ## Setup and commands
 
@@ -96,7 +123,7 @@ msv motion install                                  # only needed for the Node-b
 - Effects must render correctly when the timeline is seeked, not just
   played. Write DOM from tweened-property setters, never from `onUpdate`,
   because `seek()` suppresses callbacks. Avoid wall-clock time and
-  randomness. See `.claude/skills/gsap_animation_authoring/SKILL.md`.
+  randomness. See `.agents/skills/gsap_animation_authoring/SKILL.md`.
 - Templates are declarative data in `config/animation_templates.yaml`.
   Adding or tuning a template is a YAML change, not a JS change.
 

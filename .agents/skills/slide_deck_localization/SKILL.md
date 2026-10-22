@@ -129,7 +129,7 @@ state/<run_id>/analysis/
 `feature_callout` / `stat_highlight` / `diagram_build` / `closing` /
 `quote_testimonial` / `comparison_versus` / `timeline_roadmap` (the
 current set in `config/animation_templates.yaml`;
-`.claude/skills/motion_design_principles/SKILL.md`'s role table has the
+`.agents/skills/motion_design_principles/SKILL.md`'s role table has the
 full description of each). It's consumed only by the separate, optional
 GSAP marketing-animation pipeline
 (`slideshow_video_production/SKILL.md`'s "Optional alternate output") to

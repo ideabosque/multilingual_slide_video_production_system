@@ -3,7 +3,7 @@
 Five-agent pipeline that turns one clean English HTML slide deck into
 fully localized, narrated, captioned, publication-ready slideshow videos
 and (optionally) publishes them to YouTube — a Python CLI (`msv`) plus
-Claude Code skills/agents built on top of it, following the same overall
+agent skills in `.agents/skills/` built on top of it, following the same overall
 shape as its sibling
 [`multilingual_demo_video_production_system`](../multilingual_demo_video_production_system),
 but with an HTML/CSS deck instead of a screen recording as the input, and
@@ -17,18 +17,25 @@ English HTML Slide Deck → Agent 1 (analyze + translate slide text + localize n
                          → Agent 3 (YouTube metadata + publish) → Agent 4 (orchestrates all of it)
 ```
 
-| Role | Skill | Agent | Answers |
+| Role | Procedure skill | Orchestrator skill | Answers |
 |---|---|---|---|
-| Slide analysis & localization | `slide_deck_localization` | `.claude/agents/slide-analysis-agent.md` | What does each slide say, and what should its on-screen text, narration, captions, and the deck's marketing title say in each language? |
-| Voice & slideshow production | `slideshow_video_production` | `.claude/agents/slideshow-production-agent.md` | Given the translated slides and script, produce the actual narrated, captioned MP4 for one language. |
-| Multilingual rollout | `multilingual_rollout` | `.claude/agents/language-rollout-agent.md` | Once the default language is approved, fan Agent 2 out to every other language in one dispatch. |
-| YouTube publishing | `youtube_video_publishing` | `.claude/agents/youtube-publishing-agent.md` | Draft metadata and publish a finished video. |
-| **Orchestration** | `slide_video_orchestration` | `.claude/agents/pipeline-orchestrator-agent.md` | Run the whole thing end-to-end, resume after failure, report status. |
+| Slide analysis & localization | `slide_deck_localization` | `.agents/skills/slide_analysis/SKILL.md` | What does each slide say, and what should its on-screen text, narration, captions, and the deck's marketing title say in each language? |
+| Voice & slideshow production | `slideshow_video_production` | `.agents/skills/slideshow_production/SKILL.md` | Given the translated slides and script, produce the actual narrated, captioned MP4 for one language. |
+| Multilingual rollout | `multilingual_rollout` | `.agents/skills/language_rollout/SKILL.md` | Once the default language is approved, fan Agent 2 out to every other language in one dispatch. |
+| YouTube publishing | `youtube_video_publishing` | `.agents/skills/youtube_publishing/SKILL.md` | Draft metadata and publish a finished video. |
+| **Orchestration** | `slide_video_orchestration` | `.agents/skills/pipeline_orchestrator/SKILL.md` | Run the whole thing end-to-end, resume after failure, report status. |
 
-`pipeline-orchestrator-agent` (Agent 4) is the entry point for a full
-run — invoke it (or its skill) for "produce localized slideshow videos
-from this deck" requests rather than driving the other agents by hand.
-`slideshow-production-agent` and `language-rollout-agent` still work
+Each role has two skills. The **orchestrator skill** (formerly a Claude
+Code subagent in `.claude/agents/`) is the entry point: it holds the role,
+its guardrails and which other skill to dispatch next. The **procedure
+skill** holds the detailed steps it follows. Dispatching a skill means
+running it in a subagent when the host supports subagents, otherwise
+inline.
+
+`pipeline-orchestrator` (Agent 4) is the entry point for a full
+run — invoke it for "produce localized slideshow videos
+from this deck" requests rather than driving the other roles by hand.
+`slideshow-production` and `language-rollout` still work
 standalone for a targeted rerun (e.g. "just re-render the zh-TW
 slideshow") or a manual re-fan-out, the same as in the video-source
 sibling project.
@@ -248,9 +255,9 @@ correctly — cheaper than finding out via a failed upload.
 
 Four command groups (`slides`, `production`, `publishing`, `pipeline`) —
 every command prints one JSON object and exits 0/1 for success/failure.
-`language-rollout-agent` has no command group of its own: it's pure
+`language-rollout` has no command group of its own: it's pure
 orchestration built entirely on `msv pipeline status`/`next-actions` plus
-dispatching `slideshow-production-agent`, the same as Agent 4 does.
+dispatching `slideshow-production`, the same as Agent 4 does.
 
 ```bash
 msv slides extract-text --deck-dir <path> --out state/<run_id>/analysis/slides/manifest.json
@@ -282,7 +289,7 @@ msv pipeline next-actions / status / set-stage / rerun-language / rerun-stage /
 
 `msv slides` has no "run it end-to-end" command by design — reading the
 deck and writing slide descriptions/narration/translations is Claude's
-job (see `.claude/skills/slide_deck_localization/SKILL.md`), not a
+job (see `.agents/skills/slide_deck_localization/SKILL.md`), not a
 deterministic script; the CLI only provides the extraction/rendering/
 validation tooling around that step.
 
@@ -304,11 +311,11 @@ timing/order), played by a small generic engine + three reusable effect
 primitives (`reveal`/`accent_line`/`count_up`) in `animation_runtime.js`;
 adding or tuning a template is normally a YAML edit, not a JS change. See
 `docs/marketing-animation-pipeline-plan.md` §4.1 for why,
-and `.claude/skills/gsap_animation_authoring/SKILL.md` /
-`.claude/skills/motion_design_principles/SKILL.md` for the "how"/"which
+and `.agents/skills/gsap_animation_authoring/SKILL.md` /
+`.agents/skills/motion_design_principles/SKILL.md` for the "how"/"which
 template" guidance that applies only when someone extends the library
 itself, not on a normal render. See
-`.claude/skills/slideshow_video_production/SKILL.md`'s "Optional alternate
+`.agents/skills/slideshow_video_production/SKILL.md`'s "Optional alternate
 output" for the full command sequence.
 
 ## Architecture
@@ -410,10 +417,11 @@ project-wide setup and configuration.
 ## Directory layout
 
 ```
-.claude/
-  agents/          # 5 subagent definitions (Task-tool invocable)
-  skills/          # 7 SKILL.md files: one per agent, plus gsap_animation_authoring
-                    # and motion_design_principles (animation authoring guidance)
+.agents/
+  skills/          # 12 SKILL.md files: 5 orchestrator skills (pipeline_orchestrator,
+                    # language_rollout, slide_analysis, slideshow_production,
+                    # youtube_publishing), the 5 procedure skills they follow, plus
+                    # gsap_animation_authoring and motion_design_principles
 src/multilingual_slide_video_agent/
   config.py        # .env + config/*.yaml + cwd-relative dir resolution
   state.py          # PipelineState — resume/retry backbone
@@ -488,7 +496,7 @@ Only `DEFAULT_LANGUAGE` (or `--default-language` at `msv pipeline init`)
 gets rendered first. Every other language's `translation` stage is held
 until that render is reviewed and `msv pipeline approve-production --run-id ...`
 is called (or `PIPELINE_AUTO_APPROVE_PRODUCTION=true` is set) — at which
-point `language-rollout-agent` fans out to everyone else in one dispatch.
+point `language-rollout` fans out to everyone else in one dispatch.
 Rerunning the default language (`rerun_language --language <default>`)
 re-locks the gate automatically, since whatever was approved no longer
 exists. See `slide_video_orchestration/SKILL.md` for the full mechanics.
@@ -505,16 +513,16 @@ Requires YouTube credentials to actually be configured first — see
 
 ## Example prompts
 
-This project is meant to be operated by talking to the agents in Claude
-Code, not by typing raw `msv` commands yourself — the agents run the CLI
-for you and report back. Naming the agent explicitly (as in every example
-below) is the reliable way to get the right one; each also has a
-`description` in `.claude/agents/` tuned for Claude Code to pick up on
-intent alone, but an explicit name removes any ambiguity, especially once
-several runs exist at once.
+This project is meant to be operated by talking to a coding agent, not by
+typing raw `msv` commands yourself: the orchestrator skills run the CLI for
+you and report back. Naming the skill explicitly (as in every example
+below) is the reliable way to get the right one. Each also has a
+`description` in its `.agents/skills/<name>/SKILL.md` frontmatter tuned for
+an agent to pick up on intent alone, but an explicit name removes any
+ambiguity, especially once several runs exist at once.
 
 **Start a full run on a new deck:**
-> "Utilize pipeline-orchestrator-agent with the skill slide_video_orchestration for the deck C:\path\to\your-deck\."
+> "Use the pipeline-orchestrator skill for the deck C:\path\to\your-deck\."
 
 > "Produce localized slideshow videos from C:\Users\you\Documents\product-launch-deck\."
 
@@ -529,7 +537,7 @@ its own — see above.
 **Approve the default-language render, releasing every other language:**
 > "Approved. Please move on to the next step."
 
-> "Please dispatch pipeline-orchestrator-agent to roll out the other languages for run-20260818-001."
+> "Please dispatch pipeline-orchestrator to roll out the other languages for run-20260818-001."
 
 This is a real conversational gate (see "Default-language-first production
 gate" above) — the orchestrator will not proceed to the other languages
@@ -547,12 +555,12 @@ not permission — nothing gets uploaded until you say so explicitly.
 **Rerun one language or one stage after a fix:**
 > "Rerun the zh-TW language for run-20260818-001 from analysis onward — the narration was too verbose."
 
-> "Re-render just the fr-FR video for run-20260818-001 with slideshow-production-agent; the rest can stay as they are."
+> "Re-render just the fr-FR video for run-20260818-001 with slideshow-production; the rest can stay as they are."
 
-**Invoke a single agent directly, outside the full pipeline:**
-> "Use agent slide-analysis-agent with its skill for the deck at C:\path\to\deck\."
+**Run a single role directly, outside the full pipeline:**
+> "Use the slide-analysis skill for the deck at C:\path\to\deck\."
 
-> "Dispatch slideshow-production-agent to re-render the ja-JP video for run-20260818-001."
+> "Dispatch slideshow-production to re-render the ja-JP video for run-20260818-001."
 
 **Add a language to every future run:**
 > "Add ko-KR to config/languages.yaml with a natural TTS voice profile, then include it in SUPPORTED_LANGUAGES."

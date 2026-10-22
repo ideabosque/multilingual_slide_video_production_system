@@ -12,7 +12,7 @@ from multilingual_slide_video_agent.config import load_yaml
 
 # design_system.yaml key -> CSS custom property name. Only values a GSAP
 # timeline actually reads at runtime need to be here (see
-# .claude/skills/gsap_animation_authoring/SKILL.md "Design system binding") -
+# .agents/skills/gsap_animation_authoring/SKILL.md "Design system binding") -
 # not every key in the YAML file needs a CSS property (e.g. `radius.lg` has
 # no animation use yet).
 _CSS_PROPERTY_MAP: dict[str, tuple[str, ...]] = {

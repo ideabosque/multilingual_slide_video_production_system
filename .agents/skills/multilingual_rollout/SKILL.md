@@ -1,6 +1,6 @@
 ---
 name: multilingual-rollout
-description: Rollout skill for a dedicated Language Rollout Agent. Once a run's default language has been produced and a human has approved production, fans out slideshow production to every other configured language by dispatching the slideshow_video_production skill (slideshow-production-agent) once per remaining language. Use only after the default-language-first production gate has actually opened - never to decide whether it should open.
+description: Rollout procedure followed by the language-rollout orchestrator skill. Once a run's default language has been produced and a human has approved production, fans out slideshow production to every other configured language by dispatching the slideshow_video_production skill (slideshow-production) once per remaining language. Use only after the default-language-first production gate has actually opened - never to decide whether it should open.
 ---
 
 # Multilingual Rollout Skill
@@ -22,7 +22,7 @@ single targeted rerun. This skill's job is "produce every language that's
 now cleared to run," which is a coordination concern, not a rendering
 one. Keeping them apart means a targeted single-language rerun (e.g.
 `rerun_language --language zh-TW`) still goes straight to
-slideshow-production-agent, while the bulk post-approval rollout goes
+slideshow-production, while the bulk post-approval rollout goes
 through here.
 
 ## Non-negotiable rule
@@ -48,7 +48,7 @@ one.
   `next-actions` means this skill automatically inherits the state
   machine's existing resume/retry/stage-ordering logic instead of
   reimplementing any of it).
-- Dispatch `slideshow-production-agent` once per non-default language with
+- Dispatch `slideshow-production` once per non-default language with
   outstanding work, in parallel, each following its own skill
   (`slideshow_video_production`) exactly as it would for any other
   invocation — including recording its own pipeline state.
@@ -67,7 +67,7 @@ one.
 
 - `msv pipeline status --run-id ...` — gate confirmation (`default_language`, `production_approved`, per-language status).
 - `msv pipeline next-actions --run-id ...` — the authoritative list of outstanding jobs; filter to `language != default_language`.
-- The Task tool, to dispatch `slideshow-production-agent` (see `.claude/agents/slideshow-production-agent.md` and `.claude/skills/slideshow_video_production/SKILL.md`) once per language with outstanding work. Do not reimplement rendering here — dispatch it.
+- Dispatching the `slideshow-production` skill (`.agents/skills/slideshow_production/SKILL.md`, which follows `.agents/skills/slideshow_video_production/SKILL.md`) once per language with outstanding work: in a subagent per language when the host supports subagents, otherwise inline, one language after another. Do not reimplement rendering here — dispatch it.
 
 ## Execution procedure
 
@@ -83,11 +83,11 @@ one.
 3. If the filtered list is empty, report that there is nothing to roll
    out (every non-default language is already at or past its next stage)
    and stop — this is a normal, successful outcome, not an error.
-4. For each remaining language, dispatch `slideshow-production-agent`
-   (Task tool) with that language's `run_id`/`project_id`/`source_deck`
-   and its `localization_<language>.json` path — the same inputs Agent 4
-   would pass directly. Send all dispatches in one batch so they run
-   concurrently rather than one at a time.
+4. For each remaining language, dispatch `slideshow-production` with
+   that language's `run_id`/`project_id`/`source_deck` and its
+   `localization_<language>.json` path — the same inputs Agent 4 would
+   pass directly. With subagents, send all dispatches in one batch so they
+   run concurrently; without them, run the languages one after another.
 5. Wait for every dispatch to report back. Do not retry a failed one
    yourself — that's Agent 4's `PIPELINE_MAX_RETRIES` policy, applied on
    a later pass (including a later invocation of this same skill, which
@@ -103,7 +103,7 @@ one.
   final report (`completed` or `failed` with a reason) — none silently
   unaccounted for.
 - No dispatched language's outcome is reported as `completed` unless the
-  corresponding `slideshow-production-agent` invocation itself reported
+  corresponding `slideshow-production` invocation itself reported
   success (this skill does not mark anything completed on its own
   authority — it relays what actually happened).
 
@@ -112,15 +112,15 @@ one.
 - Gate not open: fail immediately with a clear message naming which
   condition wasn't met (default language not ready, or not approved).
   Do not dispatch anything.
-- One language's `slideshow-production-agent` dispatch failing: record it
+- One language's `slideshow-production` dispatch failing: record it
   as failed in the consolidated report; continue collecting the others
   normally. Do not abort the batch.
 - This skill performs no retries of its own — a failed language stays
-  `failed` in pipeline state (as recorded by `slideshow-production-agent`
+  `failed` in pipeline state (as recorded by `slideshow-production`
   itself) until Agent 4 decides to retry it, whether by re-invoking this
   skill (which will pick it back up via `next-actions`, since a `failed`
   stage is not a terminal-ok status) or by dispatching
-  `slideshow-production-agent` directly for just that one language.
+  `slideshow-production` directly for just that one language.
 
 ## Handoff contract
 

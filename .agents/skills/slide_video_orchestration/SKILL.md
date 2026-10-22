@@ -77,9 +77,9 @@ success/failure so this is safe to drive from Bash.
       approval), or `failed`/`partially_failed`.
    c. For each action, dispatch to the owning skill per the dispatch
       table below — for the default language and single targeted
-      reruns that means `slideshow-production-agent` directly; for the
+      reruns that means `slideshow-production` directly; for the
       bulk "every other language" case (once the gate opens) that means
-      one `language-rollout-agent` dispatch instead of looping yourself.
+      one `language-rollout` dispatch instead of looping yourself.
       Each language's outcome is still recorded via its own
       `msv pipeline set-stage` call (done by whichever agent actually
       produced it) so a failure in one language never blocks or corrupts
@@ -90,11 +90,11 @@ success/failure so this is safe to drive from Bash.
 | Stage | Skill invoked | What Agent 4 does |
 |---|---|---|
 | `analysis` | `slide_deck_localization` | Follow that skill's procedure once per run (its output covers every language); on success, `set-stage` each language's `analysis` to `completed` with the `localization_<language>.json` path as an artifact |
-| `translation` + `rendering` + `tts` (default language, or a single targeted rerun) | `slideshow_video_production` | Dispatch `slideshow-production-agent` directly for that one language; it runs `msv slides apply-translations`/`render-images` and `msv production render-slideshow`/`validate`, and records its own `translation`/`rendering`/`tts`/`validation` stages |
-| `translation` + `rendering` + `tts` (every other language, bulk) | `multilingual_rollout` | Once the production gate opens (see below), dispatch `language-rollout-agent` **once** — it fans out to `slideshow-production-agent` per remaining language itself; do not loop through these languages yourself |
-| `validation` | (this skill, or already handled above) | `slideshow-production-agent` validates as part of its own dispatch (both for the default language and via the rollout agent); only re-run `msv production validate`/`msv slides validate` yourself if you need an independent re-check |
+| `translation` + `rendering` + `tts` (default language, or a single targeted rerun) | `slideshow_video_production` | Dispatch `slideshow-production` directly for that one language; it runs `msv slides apply-translations`/`render-images` and `msv production render-slideshow`/`validate`, and records its own `translation`/`rendering`/`tts`/`validation` stages |
+| `translation` + `rendering` + `tts` (every other language, bulk) | `multilingual_rollout` | Once the production gate opens (see below), dispatch `language-rollout` **once** — it fans out to `slideshow-production` per remaining language itself; do not loop through these languages yourself |
+| `validation` | (this skill, or already handled above) | `slideshow-production` validates as part of its own dispatch (both for the default language and via the rollout agent); only re-run `msv production validate`/`msv slides validate` yourself if you need an independent re-check |
 | `publishing` | `youtube_video_publishing` | Only reached once `PIPELINE_AUTO_PUBLISH=true`, or the user has explicitly approved in conversation and the language was released via `approve-publish` (see "Human review gate" — never call `approve-publish` yourself just because a language reached `ready_for_review`); draft metadata, validate, `msv publishing upload`, then `set-stage --stage publishing --status completed --youtube-video-id ... --youtube-url ...` |
-| *(none — optional, untracked)* | `slideshow_video_production`'s "Optional alternate output" | Only if the user explicitly asks for an animated/motion-graphics version of an already-rendered language ("animated marketing video", "GSAP version", "motion graphics cut", ...). Dispatch `slideshow-production-agent` to run `msv slides generate-animation` (once per deck) then `msv production render-marketing-animation` for that language. This is a side artifact (`marketing_animation.mp4`), never a pipeline stage — do not `set-stage` anything for it, do not gate it behind approval, and do not treat a request for it as a request to also touch `slideshow.mp4` or any language's core stages |
+| *(none — optional, untracked)* | `slideshow_video_production`'s "Optional alternate output" | Only if the user explicitly asks for an animated/motion-graphics version of an already-rendered language ("animated marketing video", "GSAP version", "motion graphics cut", ...). Dispatch `slideshow-production` to run `msv slides generate-animation` (once per deck) then `msv production render-marketing-animation` for that language. This is a side artifact (`marketing_animation.mp4`), never a pipeline stage — do not `set-stage` anything for it, do not gate it behind approval, and do not treat a request for it as a request to also touch `slideshow.mp4` or any language's core stages |
 
 Because `analysis` covers every language in one deck-understanding pass,
 treat it as a single unit of work the first time a run needs it — but
@@ -119,19 +119,19 @@ fresh run will only ever return `{"language": default_language, "stage":
 "translation"}` (plus every language's `analysis`, since that's ungated
 and covers all languages at once) — no other language's `translation`
 action appears until the gate opens. Dispatch that one action to
-`slideshow-production-agent` directly, as normal. Once the default
+`slideshow-production` directly, as normal. Once the default
 language reaches `ready_for_review` or `completed`, report it to the
 user/reviewer explicitly (video path, title, any pacing warnings) and
 stop — do not proceed to other languages on your own initiative, and do
-not dispatch `language-rollout-agent` speculatively "in case" approval is
+not dispatch `language-rollout` speculatively "in case" approval is
 about to happen. Resume once a human:
 - sets `PIPELINE_AUTO_APPROVE_PRODUCTION=true` for all future runs, or
 - calls `msv pipeline approve-production --run-id ...` to release every
   other language for this run.
 
 Once approval lands (`report.production_approved: true`), dispatch
-**`language-rollout-agent` once** — not a loop of
-`slideshow-production-agent` calls yourself — and let it fan out to every
+**`language-rollout` once** — not a loop of
+`slideshow-production` calls yourself — and let it fan out to every
 remaining language and report back one consolidated per-language result
 (see the `multilingual_rollout` skill). This is the entire reason that
 skill and agent exist: catching a systemic bug in one language's render
@@ -145,7 +145,7 @@ isn't at `ready_for_review`/`completed` yet — nothing to have reviewed.
 Rerunning the default language from `analysis` or `translation` onward
 (`rerun_language --language <default_language>`) automatically re-locks
 this gate (`production_approved` resets), since whatever was reviewed no
-longer exists — the next `language-rollout-agent` dispatch (if any is in
+longer exists — the next `language-rollout` dispatch (if any is in
 flight or attempted) will find the gate closed again and refuse.
 
 ## Human review gate
@@ -157,7 +157,7 @@ offers a `publishing` job — languages sit at `ready_for_review` in
 **This is a real conversational approval gate, not just a CLI flag
 check.** When a run reaches this point, stop and explicitly ask the user
 in the conversation whether to publish — do not call
-`msv pipeline approve-publish` or dispatch `youtube-publishing-agent`
+`msv pipeline approve-publish` or dispatch `youtube-publishing`
 until they have actually said so in a reply. Report enough for them to
 decide: which language(s) are ready, the rendered video path, the title,
 and any pacing warnings from production — the same level of detail used
@@ -172,7 +172,7 @@ Once the user has explicitly approved (in this conversation, for this
 run):
 - call `publish_pending` (`msv pipeline approve-publish --run-id ... [--languages ...]`)
   to release the approved language(s) for this run, then dispatch
-  `youtube-publishing-agent` for each; or
+  `youtube-publishing` for each; or
 - if the user says they want this to stop requiring a per-run ask going
   forward, that's a `.env` change (`PIPELINE_AUTO_PUBLISH=true`) they make
   themselves or explicitly ask you to make — don't set it on their behalf

@@ -7,7 +7,7 @@
 # generic engine in slides/assets/animation_runtime.js - adding or
 # tuning a template is normally just editing this file, NOT
 # animation_runtime.js. See
-# .claude/skills/gsap_animation_authoring/SKILL.md "Template config
+# .agents/skills/gsap_animation_authoring/SKILL.md "Template config
 # schema" for the full field reference; this file's comments cover the
 # essentials.
 #

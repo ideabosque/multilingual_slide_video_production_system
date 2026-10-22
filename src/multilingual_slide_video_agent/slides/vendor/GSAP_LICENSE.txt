@@ -10,5 +10,5 @@ this project.
 
 Only the core gsap.min.js build is vendored - no plugins (ScrollTrigger,
 Draggable, etc.) are used or included, per
-.claude/skills/gsap_animation_authoring/SKILL.md's rule against
+.agents/skills/gsap_animation_authoring/SKILL.md's rule against
 scroll/drag-dependent animation in a non-interactive video capture context.

@@ -7,11 +7,11 @@ schema. `slides/assets/animation_runtime.js` has a small, fixed registry
 of reusable effect primitives (reveal/accent_line/count_up) and one
 generic engine that plays a template's steps into a gsap.timeline();
 adding or tuning a template is normally a YAML edit, not a JS change (see
-.claude/skills/gsap_animation_authoring/SKILL.md). This module is the
+.agents/skills/gsap_animation_authoring/SKILL.md). This module is the
 Python-side loader/validator for that config, plus the selection logic
 `generate_animation.py` uses when no explicit spec is given. Template
 choice is a motion-design judgment call - see
-.claude/skills/motion_design_principles/SKILL.md's role table, which this
+.agents/skills/motion_design_principles/SKILL.md's role table, which this
 function implements.
 """
 from __future__ import annotations
@@ -118,7 +118,7 @@ def choose_template(
 ) -> str:
     """Pick a shot template for one slide.
 
-    `visual_role` — an optional per-slide field `slide-analysis-agent` can
+    `visual_role` — an optional per-slide field `slide-analysis` can
     write into `slide_analysis.json` — takes priority when it's one of
     TEMPLATE_NAMES: Agent 1's own judgment about a slide, formed while
     already analyzing its content, is a stronger signal than keyword

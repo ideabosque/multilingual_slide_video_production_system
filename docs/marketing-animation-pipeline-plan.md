@@ -16,8 +16,8 @@ five-agent structure).
 
 ## What actually got built
 
-- **`.claude/skills/gsap_animation_authoring/SKILL.md`** and
-  **`.claude/skills/motion_design_principles/SKILL.md`** — project-authored
+- **`.agents/skills/gsap_animation_authoring/SKILL.md`** and
+  **`.agents/skills/motion_design_principles/SKILL.md`** — project-authored
   (not verbatim copies — see each file's own note on this), informed by
   `gsap-skills`/`motion-design-skill`'s public READMEs.
 - **`src/multilingual_slide_video_agent/slides/vendor/gsap.min.js`** —
@@ -52,8 +52,8 @@ five-agent structure).
   `test_generate_animation.py`), all passing alongside the existing 32.
 - Skill/agent docs updated: `slideshow_video_production/SKILL.md` (new
   "Optional alternate output" section), `slide_video_orchestration/SKILL.md`
-  (dispatch table row), both `pipeline-orchestrator-agent.md` and
-  `slideshow-production-agent.md`.
+  (dispatch table row), both `pipeline-orchestrator.md` and
+  `slideshow-production.md`.
 
 **Reconsidered during the build:** `video-shotcraft` was removed from the
 primary path entirely (§4.1a) after confirming it has no
@@ -63,7 +63,7 @@ skip the Remotion renderer" turned out not to hold up.
 **Not yet done:** wiring this into the actual `.claude` skill/agent
 *workflow* end-to-end via a live agent conversation (this build validated
 the CLI/rendering mechanics directly, via Bash, against real run data —
-not via a dispatched `slideshow-production-agent` conversation), and
+not via a dispatched `slideshow-production` conversation), and
 everything in §6 Phase 5 (still deferred, gated on production evidence).
 
 ### Follow-up fixes and enhancements (post-Phase-4)
@@ -182,12 +182,12 @@ docs site / Remotion's LICENSE.md); nothing below is guessed.
 | Project | Type | Renders to | Stack | License | Used in this plan? |
 |---|---|---|---|---|---|
 | [heygen-com/hyperframes](https://github.com/heygen-com/hyperframes) | CLI + library + agent skill + cloud (Lambda) render | Deterministic MP4 from HTML/CSS compositions | Node.js 22+, Puppeteer, ffmpeg; animation via GSAP/CSS/Lottie/Three.js/Anime.js/Web Animations API | **Apache 2.0** | **Not now — deferred fallback.** §4: adopt only as a rendering *backend* (shelled out to, like ffmpeg) if native Playwright video capture proves insufficient. Not part of Phase 0-4. |
-| [greensock/gsap-skills](https://github.com/greensock/gsap-skills) | Agent skill (knowledge only, no renderer) | N/A — teaches an agent to write correct GSAP code | GSAP (JS animation lib), React/Vue/Svelte/vanilla | **MIT** (skill); GSAP itself became free for all use after Webflow's 2024 acquisition of GreenSock — worth a final check of GSAP's own license page before shipping, not re-derived here | **Yes — Phase 0.** Installed into `.claude/skills/` as authoring guidance for the agent that generates each deck's GSAP timeline (§4.1). |
+| [greensock/gsap-skills](https://github.com/greensock/gsap-skills) | Agent skill (knowledge only, no renderer) | N/A — teaches an agent to write correct GSAP code | GSAP (JS animation lib), React/Vue/Svelte/vanilla | **MIT** (skill); GSAP itself became free for all use after Webflow's 2024 acquisition of GreenSock — worth a final check of GSAP's own license page before shipping, not re-derived here | **Yes — Phase 0.** Installed into `.agents/skills/` as authoring guidance for the agent that generates each deck's GSAP timeline (§4.1). |
 | [nolangz/pixel2motion](https://github.com/nolangz/pixel2motion) | Agent skill + commercial service | Animated SVG + HTML motion demo (not video, though it can export GIF/video previews) | Python 3.10+, Pillow, NumPy, Playwright/Chromium | **MIT** | **Not used.** Scope is logo-only, doesn't cover full-deck animation. Revisit narrowly only if/when a brand-mark animation for the title card is separately wanted. |
 | [remotion.dev/docs/ai/skills](https://www.remotion.dev/docs/ai/skills) | Agent skill collection for the Remotion framework | Video via React components | React, Remotion, optional Mapbox/CesiumJS, Bun | See LICENSE.md row below — **not plain open source** | **Not now — deferred secondary path.** §4/§5 Decision 3: licensing is clear (single-user scope), but this is only picked up if the primary GSAP+Playwright path's output quality proves insufficient (§6 Phase 5, gated on evidence). |
 | [haidrrrry/claude-remotion-skill](https://github.com/haidrrrry/claude-remotion-skill) | Claude agent skill | Motion-graphics MP4 (springs, staggered choreography, captions, sound design) via Remotion, self-verifies by extracting/inspecting frames | Remotion (React+TS), ffmpeg | **MIT** (skill); still requires a Remotion license — see below | **Not now — same deferred secondary path as above.** Would be the natural starting reference if/when Remotion is picked up. |
 | [Vincentwei1021/video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) | Claude/Codex agent skill | Cinematic *product* videos (152 shot recipes, 209 motion previews, beat-synced editing, sound design, CapCut/JianYing export) via Remotion | Remotion (React+TS), Node 22, Chromium | **Apache 2.0** (skill); still requires a Remotion license | **Not used, including its design knowledge.** Reconsidered after confirming it has no renderer-independent form — its shot recipes and motion templates are implemented *as* Remotion React/TSX compositions, not portable concepts with a separate reference doc, so "port the knowledge, skip the renderer" would still mean reverse-engineering Remotion-specific code. Fully deferred to the secondary Remotion path (§4.1a) alongside the other three Remotion-based projects — revisit only if that path is ever picked up. |
-| [lottiefiles/motion-design-skill](https://github.com/lottiefiles/motion-design-skill) | Agent skill (knowledge only, no renderer) | N/A — teaches timing/easing/choreography/Disney-animation-principles, implementation-agnostic (CSS, Framer Motion, GSAP, Lottie, Spring) | none (pure guidance) | **MIT** | **Yes — Phase 0.** Installed into `.claude/skills/` alongside `gsap-skills`, same purpose: improves the quality of agent-authored timelines regardless of renderer. |
+| [lottiefiles/motion-design-skill](https://github.com/lottiefiles/motion-design-skill) | Agent skill (knowledge only, no renderer) | N/A — teaches timing/easing/choreography/Disney-animation-principles, implementation-agnostic (CSS, Framer Motion, GSAP, Lottie, Spring) | none (pure guidance) | **MIT** | **Yes — Phase 0.** Installed into `.agents/skills/` alongside `gsap-skills`, same purpose: improves the quality of agent-authored timelines regardless of renderer. |
 | [gnipbao/story-to-handdrawn-video](https://github.com/gnipbao/story-to-handdrawn-video) | Standalone Remotion renderer + agent skill | Silent hand-drawn-style MP4 (20 visual styles, vertical 3:4) for later voiceover | Node 20+, Python 3.10+, Remotion, ffmpeg | **MIT** (+ SIL OFL for bundled font); still requires a Remotion license | **Not used.** Stylistic niche (hand-drawn story illustration) that doesn't fit a marketing video; kept only as a pattern reference (agent skill + Remotion renderer + silent-track-for-voiceover shape mirrors this project's own narration separation). |
 
 **Remotion's actual license** (from `remotion-dev/remotion/LICENSE.md`,
@@ -260,7 +260,7 @@ Concretely:
   narration generation, `segment_timing`, and caption logic it already has
   do not need to change.
 - Adopt **`gsap-skills`** and **`motion-design-skill`** into
-  `.claude/skills/` now, regardless of timeline — both are pure
+  `.agents/skills/` now, regardless of timeline — both are pure
   documentation/knowledge (MIT, no code dependency, no license risk). See
   §4.1 for what they actually inform, which changed from the original
   intent below once §4.1 was implemented and the scope was confirmed.
@@ -329,7 +329,7 @@ intentionally fixed.** The one real lever for better output is which
 template a slide gets assigned; the keyword-matched heuristic alone was
 crude and disconnected from Agent 1's own (already-LLM-driven) judgment
 about each slide. `slide_analysis.json` now supports an optional
-`visual_role` field (one of `TEMPLATE_NAMES`) that `slide-analysis-agent`
+`visual_role` field (one of `TEMPLATE_NAMES`) that `slide-analysis`
 assigns per slide as part of the analysis work it already does
 (`slide_deck_localization/SKILL.md` updated accordingly). `choose_template`
 uses it in preference to the position/keyword heuristic when present and
@@ -559,7 +559,7 @@ concrete input Phase 1's timeline template system is meant to consume.
 
 | Phase | Work | Rough size |
 |---|---|---|
-| 0 | Add `gsap-skills` + `motion-design-skill` to `.claude/skills/`; spike one hand-authored animated HTML slide using `config/design_system.yaml`'s tokens, confirm Playwright's `record_video_dir` captures it cleanly at target fps/resolution, and confirm a deliberately-broken timeline produces a detectable console error | ~1 day |
+| 0 | Add `gsap-skills` + `motion-design-skill` to `.agents/skills/`; spike one hand-authored animated HTML slide using `config/design_system.yaml`'s tokens, confirm Playwright's `record_video_dir` captures it cleanly at target fps/resolution, and confirm a deliberately-broken timeline produces a detectable console error | ~1 day |
 | 1 | Design the GSAP timeline template system (enter/hold/exit, keyed by slide *role* via structural CSS classes, not content keywords or per-language text) against the design system in §4.2 — own design (§4.1a), not ported from any evaluated project; resolve the `--radius-lg` TODO and the two proposed (not brand-derived) `slide_enter_ms`/`slide_exit_ms` values as part of this | ~1 week |
 | 2 | Build the `msv slides generate-animation` step (§4.1) — Agent 1 generates the timeline once per deck, cached under `state/<run_id>/analysis/slides/animation/`; add console-error capture as a validation gate | ~1 week |
 | 3 | Extend `slides/render.py` with the per-language video-capture mode, applying the one cached animation to each language's translated deck | ~3-4 days |

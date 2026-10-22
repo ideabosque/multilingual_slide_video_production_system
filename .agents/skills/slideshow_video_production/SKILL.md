@@ -271,7 +271,7 @@ version of an already-rendered language, never automatically. Two steps:
    (usually run once, alongside Agent 1's `slide_analysis.json`, not
    per-language) — assigns each slide a named GSAP shot template
    (`title_reveal`/`feature_callout`/`stat_highlight`/`diagram_build`/`closing`,
-   see `.claude/skills/motion_design_principles/SKILL.md`'s role table)
+   see `.agents/skills/motion_design_principles/SKILL.md`'s role table)
    and writes the reusable animation bundle (GSAP itself, the shared
    `animation_runtime.js`, and `config/design_system.yaml`'s tokens as CSS
    custom properties). This step targets the **original** deck's
@@ -286,7 +286,7 @@ version of an already-rendered language, never automatically. Two steps:
    short video clip via Playwright's native video recording (each
    template's entrance animation plays once, then holds its final state
    for the rest of that slide's narration-driven duration — see
-   `.claude/skills/gsap_animation_authoring/SKILL.md`), muxes each clip
+   `.agents/skills/gsap_animation_authoring/SKILL.md`), muxes each clip
    with its own narration segment and caption, and concatenates the whole
    sequence (title card first, held on slide 1's static rendered image
    with the burned-in Title caption style, same as the non-animated

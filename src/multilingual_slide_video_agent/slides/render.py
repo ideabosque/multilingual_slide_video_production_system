@@ -204,7 +204,7 @@ def render_deck_animation_clips(
     capture each slide as its own short video clip, held for exactly
     `durations_by_slide_id[slide_id]` seconds - the timeline plays once and
     then holds its final state for the rest of the recording (see
-    .claude/skills/gsap_animation_authoring/SKILL.md), which is what makes
+    .agents/skills/gsap_animation_authoring/SKILL.md), which is what makes
     "narration-driven duration" (marketing_animation_pipeline_plan §4.1)
     work without the renderer needing to know the timeline's own length.
 
