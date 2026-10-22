@@ -260,3 +260,17 @@ def test_h1_still_wins_over_an_earlier_h3():
     html = "<!DOCTYPE html><html><body><h3>kicker</h3><h1>Real title</h1></body></html>"
     (start,) = _seek_page(html, TITLE_TEMPLATE, (0,), TITLE_OPACITY)
     assert start == ["1", "0"]          # [h3, h1] in document order: only the h1 animates
+
+
+def test_render_deck_images_writes_screenshots_and_manifest(tmp_path):
+    """`msv slides render` (Agent 1's view of the deck, and the static
+    fallback's frames) - end to end, including its manifest."""
+    from multilingual_slide_video_agent.slides.render import render_deck_images
+
+    deck = tmp_path / "deck"
+    deck.mkdir()
+    (deck / "slide_001.html").write_text("<html><body><h1>One</h1></body></html>", encoding="utf-8")
+    manifest = render_deck_images(deck_dir=deck, out_dir=tmp_path / "png", viewport="640x360")
+    assert [s["slide_id"] for s in manifest["slides"]] == ["slide_001"]
+    assert (tmp_path / "png" / "slide_001.png").stat().st_size > 0
+    assert json.loads((tmp_path / "png" / "render_manifest.json").read_text(encoding="utf-8"))["slides"]

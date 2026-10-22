@@ -11,6 +11,7 @@ engine that used to record slides here was retired on 2026-10-22.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
