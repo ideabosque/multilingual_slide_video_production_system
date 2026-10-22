@@ -1,7 +1,12 @@
 # Motion Engines (HyperFrames + Remotion) and Pipeline Hardening — Development Plan
 
 Status: **Phase 0 (Part A) implemented on branch `feature/phase0-hardening`;
-Phases 1–8 approved, not started.** Open decisions were accepted with their
+Phases 1–8 approved, not started.** **Phase 1 - engine seam - is now implemented on branch
+`feature/phase1-engine-seam` (committed on top of Phase 0: `production/motion/`,
+`render-motion` CLI + alias, seek mode, `extract-roles`, `motion.yaml`,
+`msv motion install/doctor`, B6 checks 1-4; tests 97 -> 114 all passing.
+Verified: Playwright native recording can yield entirely-blank webms on some
+environments; validation refuses loudly - see D1/B1; Phase 2a spike next.) Open decisions were accepted with their
 recommended defaults on 2026-10-13 (see "Open decisions").
 
 What Phase 0 actually changed, where it differs from the text below:
