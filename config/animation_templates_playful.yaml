@@ -4,15 +4,17 @@
 #
 # What makes it playful, compared to the calm style's half-second fade
 # followed by a static hold:
-# - springy eases with overshoot (back.out / elastic.out) instead of ease-out;
+# - springy eases with strong overshoot (back.out / elastic.out);
 # - kinetic headlines: words (or CJK characters) bounce in one by one;
 # - content keeps arriving while the narrator talks: `beats` spreads cards,
 #   bullets and list items across the slide ("beat:<fraction>" positions are
 #   fractions of the slide's narration-driven duration);
-# - nothing ever freezes: a slow camera push-in (`drift`) on the whole slide
-#   and a gentle `float` on a hero element;
+# - nothing ever freezes: a camera push-in (`drift`) on the whole slide and
+#   `float` on headlines, stats and cards once they've landed;
 # - a quick `exit` just before each cut, so slides hand off instead of
 #   snapping.
+# Tuned more energetic on 2026-10-22 (bigger overshoot and movement, faster
+# staggers, content landing earlier, more ambient motion).
 #
 # Step schema: see config/animation_templates.yaml's header. Effects added
 # for this style (implemented in slides/assets/animation_runtime.js):
@@ -29,80 +31,89 @@
 
 title_reveal:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.15, params: {y: 56, rotation: 10, stagger: 0.07}}
-    - {role: title, effect: accent_line, position: ">-0.25"}
-    - {role: subtitle, effect: pop, position: ">-0.1", params: {y: 24, scale: 0.6}}
-    - {id: cards, role: nodes, min_count: 2, effect: beats, params: {from: 0.2, to: 0.45, rotation: 3}}
-    - {role: body, effect: beats, skip_if_ran: cards, params: {from: 0.3, to: 0.6, y: 20, scale: 0.85}}
-    - {role: title, effect: float, position: "beat:0.35", params: {y: 6, period: 4}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.1, ease: "back.out(3)", params: {y: 90, rotation: 16, scale: 0.6, stagger: 0.05}}
+    - {role: title, effect: accent_line, position: ">-0.3"}
+    - {role: subtitle, effect: pop, position: ">-0.15", ease: "back.out(3)", params: {y: 40, scale: 0.4}}
+    - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.08, to: 0.3, first_max: 0.8, scale: 0.2, y: 60, rotation: 7}}
+    - {role: body, effect: beats, skip_if_ran: cards, ease: "back.out(3)", params: {from: 0.12, to: 0.4, first_max: 0.9, y: 40, scale: 0.6, rotation: 4}}
+    - {role: title, effect: float, position: "beat:0.2", params: {y: 12, period: 2.6}}
+    - {role: nodes, effect: float, position: "beat:0.35", params: {y: 10, period: 2.2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 feature_callout:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.1, params: {y: 44, rotation: 8}}
-    - {role: title, effect: accent_line, position: ">-0.2"}
-    - {role: subtitle, effect: pop, position: ">-0.1", params: {y: 20, scale: 0.7}}
-    - {id: cards, role: nodes, min_count: 2, effect: beats, params: {from: 0.15, to: 0.6, rotation: 3}}
-    - {role: body, effect: beats, skip_if_ran: cards, params: {from: 0.15, to: 0.6, y: 24, scale: 0.8}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 80, rotation: 14, scale: 0.6, stagger: 0.04}}
+    - {role: title, effect: accent_line, position: ">-0.25"}
+    - {role: subtitle, effect: pop, position: ">-0.15", ease: "back.out(3)", params: {y: 36, scale: 0.4}}
+    - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.08, to: 0.45, first_max: 0.8, scale: 0.2, y: 60, rotation: 7}}
+    - {role: body, effect: beats, skip_if_ran: cards, ease: "back.out(3)", params: {from: 0.08, to: 0.45, first_max: 0.8, y: 40, scale: 0.6, rotation: 4}}
+    - {role: nodes, effect: float, position: "beat:0.5", params: {y: 10, period: 2.2}}
+    - {role: title, effect: float, position: "beat:0.25", params: {y: 8, period: 3}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 stat_highlight:
   steps:
-    - {role: slide, effect: drift}
-    - {role: [stat, title], effect: count_up, position: 0.2, params: {pop: true, scale: 0.3}}
-    - {role: title, effect: words, position: 0.1, params: {y: 40, rotation: 6}}
-    - {role: subtitle, effect: pop, position: "beat:0.12", params: {y: 20, scale: 0.7}}
-    - {id: cards, role: nodes, min_count: 2, effect: beats, params: {from: 0.2, to: 0.55, rotation: 3}}
-    - {role: body, effect: beats, skip_if_ran: cards, params: {from: 0.2, to: 0.55, y: 20, scale: 0.85}}
-    - {role: stat, effect: float, position: "beat:0.3", params: {y: 10, period: 3.2}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.07}}
+    - {role: [stat, title], effect: count_up, position: 0.1, params: {pop: true, scale: 0.1}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 70, rotation: 12, scale: 0.6, stagger: 0.04}}
+    - {role: subtitle, effect: pop, position: "beat:0.06", ease: "back.out(3)", params: {y: 36, scale: 0.4}}
+    - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.1, to: 0.4, first_max: 1.0, scale: 0.2, y: 60, rotation: 7}}
+    - {role: body, effect: beats, skip_if_ran: cards, ease: "back.out(3)", params: {from: 0.1, to: 0.4, first_max: 1.0, y: 40, scale: 0.6, rotation: 4}}
+    - {role: stat, effect: float, position: "beat:0.15", params: {y: 16, period: 2.2}}
+    - {role: nodes, effect: float, position: "beat:0.45", params: {y: 8, period: 2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 diagram_build:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.1, params: {y: 44, rotation: 8}}
-    - {role: title, effect: accent_line, position: ">-0.2"}
-    - {id: diagram_nodes, role: nodes, min_count: 2, effect: beats, params: {from: 0.12, to: 0.65, rotation: 4, scale: 0.4}}
-    - {role: diagram, effect: pop, position: "beat:0.15", skip_if_ran: diagram_nodes, params: {scale: 0.6}}
-    - {role: body, effect: beats, params: {from: 0.2, to: 0.7, y: 20, scale: 0.85}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 80, rotation: 14, scale: 0.6, stagger: 0.04}}
+    - {role: title, effect: accent_line, position: ">-0.25"}
+    - {id: diagram_nodes, role: nodes, min_count: 2, effect: beats, ease: "back.out(3.2)", params: {from: 0.08, to: 0.5, first_max: 0.8, rotation: 9, scale: 0.15, y: 70}}
+    - {role: diagram, effect: pop, position: "beat:0.08", skip_if_ran: diagram_nodes, ease: "elastic.out(1, 0.5)", params: {scale: 0.3}}
+    - {role: body, effect: beats, ease: "back.out(3)", params: {from: 0.12, to: 0.55, first_max: 1.0, y: 40, scale: 0.6, rotation: 4}}
+    - {role: nodes, effect: float, position: "beat:0.55", params: {y: 10, period: 2.2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 closing:
   steps:
-    - {role: slide, effect: drift, params: {scale: 1.05}}
-    - {role: title, effect: words, position: 0.1, params: {y: 64, rotation: 12, stagger: 0.08}}
-    - {role: title, effect: accent_line, position: ">-0.2"}
-    - {role: cta, effect: pop, position: ">", params: {scale: 0.3}, ease: "elastic.out(1, 0.5)"}
-    - {id: cards, role: nodes, min_count: 2, effect: beats, params: {from: 0.15, to: 0.5, rotation: 3}}
-    - {role: body, effect: beats, skip_if_ran: cards, params: {from: 0.15, to: 0.5, y: 20, scale: 0.85}}
-    - {role: cta, effect: float, position: "beat:0.4", params: {y: 8, period: 2.6}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.08}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3.4)", params: {y: 100, rotation: 18, scale: 0.5, stagger: 0.06}}
+    - {role: title, effect: accent_line, position: ">-0.25"}
+    - {role: cta, effect: pop, position: ">", params: {scale: 0.1}, ease: "elastic.out(1.2, 0.4)"}
+    - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.08, to: 0.4, first_max: 0.8, scale: 0.2, y: 60, rotation: 7}}
+    - {role: body, effect: beats, skip_if_ran: cards, ease: "back.out(3)", params: {from: 0.08, to: 0.4, first_max: 0.8, y: 40, scale: 0.6, rotation: 4}}
+    - {role: cta, effect: float, position: "beat:0.3", params: {y: 14, period: 1.8}}
+    - {role: nodes, effect: float, position: "beat:0.45", params: {y: 10, period: 2.2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 quote_testimonial:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.15, params: {y: 30, rotation: 4, stagger: 0.09}}
-    - {role: subtitle, effect: pop, position: "beat:0.25", params: {y: 16, scale: 0.7}}
-    - {id: cards, role: nodes, min_count: 2, effect: beats, params: {from: 0.3, to: 0.65, rotation: 3}}
-    - {role: body, effect: beats, skip_if_ran: cards, params: {from: 0.3, to: 0.65, y: 20, scale: 0.85}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.1, ease: "back.out(2.6)", params: {y: 50, rotation: 8, scale: 0.7, stagger: 0.06}}
+    - {role: subtitle, effect: pop, position: "beat:0.15", ease: "back.out(3)", params: {y: 30, scale: 0.4}}
+    - {id: cards, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.2, to: 0.5, first_max: 1.5, scale: 0.2, y: 60, rotation: 7}}
+    - {role: body, effect: beats, skip_if_ran: cards, ease: "back.out(3)", params: {from: 0.2, to: 0.5, first_max: 1.5, y: 40, scale: 0.6, rotation: 4}}
+    - {role: title, effect: float, position: "beat:0.3", params: {y: 8, period: 3}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 comparison_versus:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.1, params: {y: 44, rotation: 8}}
-    - {role: title, effect: accent_line, position: ">-0.2"}
-    - {id: panels, role: nodes, min_count: 2, effect: beats, params: {from: 0.12, to: 0.35, rotation: 5, scale: 0.4}}
-    - {role: body, effect: beats, skip_if_ran: panels, params: {from: 0.12, to: 0.5, y: 24, scale: 0.8}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 80, rotation: 14, scale: 0.6, stagger: 0.04}}
+    - {role: title, effect: accent_line, position: ">-0.25"}
+    - {id: panels, role: nodes, min_count: 2, effect: beats, ease: "back.out(3.2)", params: {from: 0.06, to: 0.22, first_max: 0.7, rotation: 10, scale: 0.15, y: 70}}
+    - {role: body, effect: beats, skip_if_ran: panels, ease: "back.out(3)", params: {from: 0.08, to: 0.4, first_max: 0.8, y: 40, scale: 0.6, rotation: 4}}
+    - {role: nodes, effect: float, position: "beat:0.3", params: {y: 10, period: 2.2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
 
 timeline_roadmap:
   steps:
-    - {role: slide, effect: drift}
-    - {role: title, effect: words, position: 0.1, params: {y: 44, rotation: 8}}
-    - {role: title, effect: accent_line, position: ">-0.2"}
-    - {id: steps, role: nodes, min_count: 2, effect: beats, params: {from: 0.12, to: 0.7, y: 40, scale: 0.6}}
-    - {role: body, effect: beats, skip_if_ran: steps, params: {from: 0.12, to: 0.7, y: 24, scale: 0.8}}
-    - {role: slide, effect: exit}
+    - {role: slide, effect: drift, params: {scale: 1.06}}
+    - {role: title, effect: words, position: 0.05, ease: "back.out(3)", params: {y: 80, rotation: 14, scale: 0.6, stagger: 0.04}}
+    - {role: title, effect: accent_line, position: ">-0.25"}
+    - {id: steps, role: nodes, min_count: 2, effect: beats, ease: "back.out(3)", params: {from: 0.08, to: 0.55, first_max: 0.8, y: 70, scale: 0.3, rotation: 6}}
+    - {role: body, effect: beats, skip_if_ran: steps, ease: "back.out(3)", params: {from: 0.08, to: 0.55, first_max: 0.8, y: 40, scale: 0.6, rotation: 4}}
+    - {role: nodes, effect: float, position: "beat:0.6", params: {y: 10, period: 2.2}}
+    - {role: slide, effect: exit, duration: fast, params: {y: -40}}
