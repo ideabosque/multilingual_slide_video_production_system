@@ -1,0 +1,6 @@
+{
+  "name": "motion",
+  "private": true,
+  "description": "Node toolchain for the motion engines (motion-engines-and-hardening-plan B3 #3). Pinned exact versions only - no ^ or ~ ranges, package-lock.json committed, installed via `msv motion install` (npm ci), never fetched via npx at render time.",
+  "dependencies": {}
+}

@@ -1,0 +1,37 @@
+# Motion rendering defaults (motion-engines-and-hardening-plan B3 #4).
+# Everything here is the motion-rendering counterpart of video.yaml: video.yaml
+# still governs slideshow.mp4's static rendering; this file governs
+# render-motion's animated output for all engines.
+#
+# default_engine is flipped deliberately (Open decision D1): the doc's phase
+# plan says NOT to flip it until HyperFrames has passed its Phase 2b/4 parity
+# sign-off, and never to set it to `remotion` without an explicit decision
+# (Remotion's license + the "rebuilt look" are covered by B5).
+
+default_engine: playwright   # flip to hyperframes after Phase 4 parity sign-off (D1)
+fps: 30                      # animation needs real fps, unlike slideshow.mp4's 5fps
+
+encode:
+  crf: 19
+  preset: medium
+  pix_fmt: yuv420p
+
+engines:
+  hyperframes: { workers: auto, timeout_seconds: 1800 }   # read by Phase 2b's engine
+  remotion: { concurrency: auto, timeout_seconds: 1800, composition_id: Slideshow }
+
+validation:
+  # B6 check 2 - a boundary frame is "blank" when its grayscale mean is this
+  # close to pure white/black AND its stddev is under this threshold (the
+  # mean/stddev pair deliberately allows near-uniform *branded* backgrounds;
+  # the brand's warm off-white page background is documented in
+  # config/design_system.yaml).
+  blank_max_stddev: 6.0
+  blank_white_min_mean: 244
+  blank_black_max_mean: 12
+  # B6 check 3 - slide frames at entrance (start + 1 frame) vs. settle
+  # (end - 1 frame) must differ by more than this mean grayscale delta, or the
+  # slide's animation "never visibly happened" (the failure mode the earlier
+  # plan identified as the worst one: selectors that silently resolve to
+  # nothing).
+  animation_min_mean_delta: 1.5

@@ -156,6 +156,27 @@ def slides_generate_animation(deck_dir: str, out: str, slide_analysis: str | Non
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
+
+@slides.command("extract-roles")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The translated deck to read roles from (msv slides apply-translations output)")
+@click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output), for spec.json's per-slide template")
+@click.option("--out", required=True, type=click.Path(), help="Where to write roles_<language>.json (convention: the run's analysis/slides/animation/ directory)")
+@click.option("--viewport", default="1920x1080", show_default=True)
+def slides_extract_roles(deck_dir: str, animation_dir: str, out: str, viewport: str) -> None:
+    "Extract each translated slide's resolved animation roles into roles_<language>.json (plan B3 #2)."
+    from multilingual_slide_video_agent.slides.extract_roles import ExtractRolesError, extract_deck_roles
+
+    try:
+        manifest = extract_deck_roles(
+            translated_deck_dir=deck_dir, animation_dir=animation_dir, out_path=out, viewport=viewport,
+        )
+    except ExtractRolesError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    manifest["ok"] = True
+    click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+
 # ---------------------------------------------------------------------------
 # msv production ... (Agent 2)
 # ---------------------------------------------------------------------------
@@ -220,8 +241,8 @@ def production_render_marketing_animation(
     localization: str | None, output_dir: str | None, output_name: str, viewport: str,
 ) -> None:
     """Rebuild an already-rendered language as a GSAP-animated marketing MP4 (marketing_animation_pipeline_plan §4)."""
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
     from multilingual_slide_video_agent.production.render_marketing_animation import (
-        MarketingAnimationError,
         render_marketing_animation,
     )
 
@@ -231,11 +252,102 @@ def production_render_marketing_animation(
             animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization,
             output_dir=output_dir, output_name=output_name, viewport=viewport,
         )
-    except MarketingAnimationError as e:
+    except MotionError as e:
         _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
         return
     envelope["ok"] = envelope.get("status") == "completed"
     _echo_result(envelope)
+
+
+
+# ---------------------------------------------------------------------------
+# msv motion ... (Agent 2; Part B of motion-engines-and-hardening-plan)
+# ---------------------------------------------------------------------------
+
+@main.group()
+def motion() -> None:
+    "The Node toolchain behind the HyperFrames/Remotion engines (plan B3 #3). A missing toolchain only disables the two Node engines; the Python-only path never needs it."
+
+
+@motion.command("install")
+def motion_install() -> None:
+    "Run npm ci in motion/ - a pinned install from the committed package-lock.json (never a bare install, never npx at render time, plan B3 #3)."
+    import shutil
+    import subprocess
+
+    motion_dir = cfg.root_dir() / "motion"
+    if not (motion_dir / "package.json").exists():
+        _echo_result({"ok": True, "installed": False, "message": "no motion/package.json scaffold yet (plan phases 2a/2b add it); nothing to install"})
+        return
+    npm = shutil.which("npm")
+    if not npm:
+        _echo_result({"ok": False, "errors": ["npm not on PATH - install Node 22+ first (see msv motion doctor)"]})
+        return
+    try:
+        subprocess.run([npm, "ci", "--prefix", str(motion_dir)], check=True, capture_output=True, text=True)
+    except OSError as e:
+        _echo_result({"ok": False, "errors": [f"npm ci failed: {e}"]})
+        return
+    except subprocess.SubprocessError as e:
+        stderr = (getattr(e, "stderr", "") or str(e))[-2000:]
+        _echo_result({"ok": False, "errors": [f"npm ci failed: {stderr}"]})
+        return
+    _echo_result({
+        "ok": True, "installed": True,
+        "from_lockfile": (motion_dir / "package-lock.json").exists(),
+        "motion_dir": str(motion_dir),
+    })
+
+
+@motion.command("doctor")
+def motion_doctor() -> None:
+    "Environment check for motion rendering (plan B3 #3): Node, ffmpeg, Chromium, each engine's availability, plus the Remotion license reminder (B5)."
+    import shutil
+    import subprocess as sp
+
+    from multilingual_slide_video_agent.production.motion import render as motion_render
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.production.motion.playwright_engine import (
+        check_available as playwright_check,
+    )
+
+    node_path = shutil.which("node")
+    node_version = None
+    if node_path:
+        try:
+            node_version = sp.run([node_path, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+        except Exception:
+            node_version = "unknown"
+    node_major = int(node_version.lstrip("v").split(".")[0]) if node_version and node_version.lstrip("v").split(".")[0].isdigit() else None
+
+    engines = {}
+    for name in motion_render.KNOWN_ENGINE_NAMES:
+        try:
+            engine = motion_render.get_engine(name)
+            missing = engine.check_available()
+        except MotionError as e:
+            engines[name] = {"available": False, "missing": [str(e)]}
+            continue
+        engines[name] = {"available": not missing, "missing": missing}
+
+    _echo_result({
+        "ok": True,
+        "checks": {
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "ffprobe": bool(shutil.which("ffprobe")),
+            "node": {
+                "present": bool(node_path), "version": node_version,
+                "meets_hyperframes_min": node_major is not None and node_major >= 22,
+            },
+            "playwright_chromium": playwright_check(),
+        },
+        "engines": engines,
+        "remotion_license_reminder": (
+            "Remotion's free tier covers individuals and companies of <=3 people; re-check on headcount "
+            "growth, any automated-service offering, or a Remotion 5.x upgrade (plan B5). It is never "
+            "the default engine without an explicit decision (D1)."
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------

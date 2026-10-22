@@ -91,11 +91,22 @@ _ANIMATION_MARKER_END = "<!-- /ANIMATION-OVERRIDE -->"
 _ANIMATION_ASSET_FILES = ("gsap.min.js", "animation_runtime.js", "design_tokens.css", "templates_config.js")
 
 
-def _inject_animation_assets(translated_deck_dir: Path, animation_dir: Path, template_by_slide: dict[str, str]) -> None:
+def _inject_animation_assets(
+    translated_deck_dir: Path, animation_dir: Path, template_by_slide: dict[str, str],
+    motion_mode: str = "live",
+) -> None:
     """Copy the deck's pre-generated animation bundle into the translated
     deck directory and inject the <script>/<link> tags each slide needs,
     idempotently (re-running replaces the prior injection by marker, the
-    same pattern slides/cjk_fonts.py uses)."""
+    same pattern slides/cjk_fonts.py uses).
+
+    `motion_mode` is animation_runtime.js's build-mode flag (plan B3 #1):
+    "live" (default) - today's Playwright wall-clock capture; "seek" - the
+    timeline is built paused and registered as
+    `window.__timelines[<slide_id>]` for frame-addressable renderers
+    (`msv slides extract-roles` uses it so text is read pre-animation;
+    Phase 2b's HyperFrames engine injects "seek" into its own bundle
+    copy)."""
     for name in _ANIMATION_ASSET_FILES:
         shutil.copy2(animation_dir / name, translated_deck_dir / name)
 
@@ -125,7 +136,12 @@ def _inject_animation_assets(translated_deck_dir: Path, animation_dir: Path, tem
             f"{_ANIMATION_MARKER_START}\n"
             "<style>html{visibility:hidden}</style>\n"
             '<link rel="stylesheet" href="design_tokens.css">\n'
-            f'<script>window.__ANIMATION_TEMPLATE__="{template}";</script>\n'
+            f'<script>window.__ANIMATION_TEMPLATE__="{template}";'
+            + (
+                f'window.__MOTION_MODE__="seek";window.__ANIMATION_SLIDE_ID__="{slide_id}";'
+                if motion_mode == "seek" else ""
+            )
+            + '</script>\n'
             '<script src="templates_config.js"></script>\n'
             '<script src="gsap.min.js"></script>\n'
             '<script src="animation_runtime.js" defer></script>\n'
@@ -212,8 +228,23 @@ def render_deck_animation_clips(
                 slide_errors: list[str] = []
                 page.on("console", lambda msg: slide_errors.append(msg.text) if msg.type == "error" else None)
                 page.on("pageerror", lambda exc: slide_errors.append(str(exc)))
-                page.goto(slide_path.resolve().as_uri())
-                page.wait_for_function("document.documentElement.style.visibility === 'visible'", timeout=5000)
+                try:
+                    page.goto(slide_path.resolve().as_uri())
+                    page.wait_for_function("document.documentElement.style.visibility === 'visible'", timeout=5000)
+                except Exception:
+                    # A template/selector that throws (e.g. an unknown
+                    # effect) leaves the page hidden forever, so the
+                    # visibility wait alone would time out and bury the
+                    # page's own error message behind a bare timeout.
+                    # Surface the slide's actual error, then treat it as
+                    # the same loud capture failure.
+                    if slide_errors:
+                        console_errors.extend(f"{slide_id}: {msg}" for msg in slide_errors)
+                        page.close()
+                        context.close()
+                        shutil.rmtree(clip_tmp_dir, ignore_errors=True)
+                        continue
+                    raise
                 # Subtract a small safety margin so IPC/measurement slop
                 # biases toward trimming slightly too little (a few extra
                 # blank frames) rather than too much (cutting into real

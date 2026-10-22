@@ -99,6 +99,54 @@
     };
   }
 
+  // ---------- stat text parsing (shared by count_up and role extraction) ----------
+  // Parses a leading/embedded numeric value out of an element's text
+  // (handles "40%", "3x faster", "$1.2M saved", "99.9%"); null when the
+  // text has no number.
+  function statParts(text) {
+    var match = /^(\D*)([\d]+(?:\.[\d]+)?)(.*)$/.exec((text || "").trim());
+    if (!match) return null;
+    return { prefix: match[1], value: parseFloat(match[2]), suffix: match[3] };
+  }
+
+  // ---------- role extraction (B3 #2, `msv slides extract-roles`) ----------
+  // Serializes what the role resolution actually resolved on the current
+  // DOM - one definition of "what is the title of this slide" for every
+  // engine, exposed as `window.__extractRoles()`. Plain DOM reads, no
+  // mutation; the text is read from the (already-translated) DOM, so it is
+  // localized automatically. Extraction runs against a `seek`-mode
+  // injection so the timeline stays paused at 0 and stat/count-up text is
+  // read pre-animation.
+  window.__extractRoles = function () {
+    var els = roleElements();
+    var textOf = function (el) { return el ? (el.textContent || "").trim() : null; };
+    var nodes = (els.nodes || []).map(function (el) {
+      return {
+        text: textOf(el),
+        children: Array.prototype.slice.call(el.children).map(textOf),
+      };
+    });
+    var media = [];
+    var mediaEls = Array.prototype.slice.call(document.querySelectorAll("svg, img"));
+    for (var mi = 0; mi < mediaEls.length; mi++) {
+      var mediaEl = mediaEls[mi];
+      media.push({
+        type: mediaEl.tagName.toLowerCase(),
+        src: mediaEl.tagName.toLowerCase() === "img" ? (mediaEl.getAttribute("src") || "") : "",
+      });
+    }
+    return {
+      title: textOf(els.title),
+      subtitle: textOf(els.subtitle),
+      body: (els.body || []).map(textOf),
+      diagram: els.diagram ? { tag: els.diagram.tagName.toLowerCase(), text: textOf(els.diagram) } : null,
+      nodes: nodes,
+      stat: els.stat ? statParts(textOf(els.stat)) : null,
+      cta: textOf(els.cta),
+      media: media,
+    };
+  };
+
   // ---------- shared decorative effect: drawn accent-line under an element ----------
   // Inserted into normal document flow right after `afterEl` (no absolute
   // positioning/measurement needed), then scaled in from zero width.
@@ -123,21 +171,26 @@
   }
 
   // ---------- shared effect: animate a stat element's number counting up ----------
-  // Parses a leading/embedded numeric value out of the element's text
-  // (handles "40%", "3x faster", "$1.2M saved", "99.9%") and tweens a
-  // counter from 0 to that value, preserving the original prefix/suffix
-  // text and decimal precision. Falls back to a plain scale-in (no
-  // count-up) if no number is found - never leaves the element blank.
+  // Tweens a counter from 0 to the parsed value (see statParts), preserving
+  // the original prefix/suffix text and decimal precision. Falls back to a
+  // plain scale-in (no count-up) if no number is found - never leaves the
+  // element blank.
   function animateCountUp(tl, ds, el, position) {
-    var match = /^(\D*)([\d]+(?:\.[\d]+)?)(.*)$/.exec((el.textContent || "").trim());
+    var match = statParts(el.textContent);
     if (!match) {
       tl.from(el, { opacity: 0, scale: 0.86, duration: ds.durationSlow, ease: "back.out(1.2)" }, position);
       return;
     }
-    var prefix = match[1], target = parseFloat(match[2]), suffix = match[3];
-    var decimals = (match[2].split(".")[1] || "").length;
+    var prefix = match[1], target = match[2], suffix = match[3];
+    var decimals = (String(target).split(".")[1] || "").length;
     var counter = { val: 0 };
     tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);
+    // Seek-safety audit (plan B3's count_up caveat): `counter.val` is a
+    // tweened object property, so its displayed value is derived from the
+    // timeline's playhead progress on every update - never accumulated per
+    // tick and never wall-clock dependent. Seeking backwards or jumping
+    // ahead re-renders the correct number, asserted by the seek-mode
+    // determinism test (tests/test_motion_runtime_seek.py).
     tl.to(counter, {
       val: target,
       duration: ds.slideEnter,
@@ -249,13 +302,23 @@
   }
 
   function run() {
+    var mode = window.__MOTION_MODE__ === "seek" ? "seek" : "live";
     var name = window.__ANIMATION_TEMPLATE__ || "feature_callout";
     var templates = window.__ANIMATION_TEMPLATES__ || {};
     var steps = (templates[name] || templates.feature_callout || {}).steps || [];
     var ds = readTokens();
     var els = roleElements();
-    var tl = gsap.timeline();
+    // "seek" (B3 #1): the same timeline the live engine plays, built paused
+    // and registered under the renderer-chosen slide id instead of played
+    // live for wall-clock capture. Same construction path either way, so
+    // what the seeked renderer draws is what the live engine played.
+    var tl = gsap.timeline(mode === "seek" ? { paused: true } : undefined);
     runTemplateSteps(tl, ds, els, steps);
+    if (mode === "seek") {
+      var slideId = window.__ANIMATION_SLIDE_ID__ || "slide";
+      window.__timelines = window.__timelines || {};
+      window.__timelines[slideId] = tl;
+    }
     // Deliberately no .clearProps()/.reverse() - the capture step relies on
     // the timeline holding its final state for the rest of the recording
     // (see gsap_animation_authoring SKILL.md).
