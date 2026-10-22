@@ -33,15 +33,16 @@ def motion_manifest_path(out_dir: Path, output_name: str) -> Path:
 
 
 def get_engine(name: str) -> MotionEngine:
-    """Resolve an engine name to an instance. Only `playwright` exists in
-    Phase 1; `hyperframes`/`remotion` are real engines in Phases 2b/3 and
-    say so loudly here rather than pretending to be selectable."""
+    """Resolve an engine name to an instance. `remotion` is built in Phase 3
+    and says so loudly here rather than pretending to be selectable."""
     if name == "playwright":
         from multilingual_slide_video_agent.production.motion.playwright_engine import PlaywrightEngine
 
         return PlaywrightEngine()
     if name == "hyperframes":
-        raise MotionError("engine 'hyperframes' is implemented in this plan's Phase 2b (after the Phase 2a spike)")
+        from multilingual_slide_video_agent.production.motion.hyperframes_engine import HyperFramesEngine
+
+        return HyperFramesEngine()
     if name == "remotion":
         raise MotionError("engine 'remotion' is implemented in this plan's Phase 3")
     raise MotionError(
@@ -103,7 +104,7 @@ def render_motion(
         "run_id": run_id,
         "project_id": project_id,
         "language": language,
-        "engine": {"name": engine_name, "version": None},
+        "engine": {"name": engine_name, "version": engine.version() if hasattr(engine, "version") else None},
         "fps": ctx.fps,
         "resolution": ctx.resolution,
         "encode": ctx.motion_config.get("encode", {}),

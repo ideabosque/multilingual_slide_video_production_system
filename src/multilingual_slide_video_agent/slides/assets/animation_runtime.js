@@ -1,6 +1,6 @@
 /*
  * GSAP animation runtime for one slide deck. Identical file across every
- * slide in every deck (see .claude/skills/gsap_animation_authoring/SKILL.md
+ * slide in every deck (see .agents/skills/gsap_animation_authoring/SKILL.md
  * "Injection point") - it is a generic *engine* plus a small fixed
  * registry of effect primitives (reveal/accent_line/count_up), not
  * per-template code. The actual templates (title_reveal, feature_callout,
@@ -25,8 +25,16 @@
 (function () {
   "use strict";
 
-  function readTokens() {
-    var cs = getComputedStyle(document.documentElement);
+  // `scope` (everywhere below) is what role resolution searches: the whole
+  // `document` for a standalone slide page (Playwright capture), or one
+  // slide's root element when several slides share a page (HyperFrames
+  // mounts every slide into one document - plan B4's spike).
+  function scopeElement(scope) {
+    return scope === document ? document.documentElement : scope;
+  }
+
+  function readTokens(scope) {
+    var cs = getComputedStyle(scopeElement(scope));
     var num = function (name, fallback) {
       var raw = cs.getPropertyValue(name).trim();
       var parsed = parseFloat(raw);
@@ -46,17 +54,17 @@
   // Tiers are tried in order and the first match wins, so a lower tier
   // (e.g. h3 for the title) only applies when nothing above it exists -
   // decks that already resolve keep resolving to the same element.
-  function pickEl(customClass, tagSelector, lastResort) {
-    return document.querySelector(customClass) || document.querySelector(tagSelector)
-      || (lastResort ? document.querySelector(lastResort) : null);
+  function pickEl(scope, customClass, tagSelector, lastResort) {
+    return scope.querySelector(customClass) || scope.querySelector(tagSelector)
+      || (lastResort ? scope.querySelector(lastResort) : null);
   }
 
   // Finds the largest group of >=2 direct siblings that share a class name,
-  // searching the whole body. This is how most real decks express card/row/
+  // searching the whole scope. This is how most real decks express card/row/
   // layer grids (N divs with one repeated class), as opposed to semantic
   // <li>/<p> - see this file's header comment.
-  function findRepeatedSiblingGroup() {
-    var all = document.querySelectorAll("body *");
+  function findRepeatedSiblingGroup(scope) {
+    var all = scope === document ? document.querySelectorAll("body *") : scope.querySelectorAll("*");
     var best = null;
     var bestSize = 0;
     for (var i = 0; i < all.length; i++) {
@@ -78,34 +86,34 @@
     return best || [];
   }
 
-  function pickAll(customClass, tagSelector) {
-    var byClass = document.querySelectorAll(customClass);
+  function pickAll(scope, customClass, tagSelector) {
+    var byClass = scope.querySelectorAll(customClass);
     if (byClass.length) return Array.prototype.slice.call(byClass);
-    var repeated = findRepeatedSiblingGroup();
+    var repeated = findRepeatedSiblingGroup(scope);
     if (repeated.length) return repeated;
-    return Array.prototype.slice.call(document.querySelectorAll(tagSelector));
+    return Array.prototype.slice.call(scope.querySelectorAll(tagSelector));
   }
 
-  function roleElements() {
+  function roleElements(scope) {
     return {
       // h3 only when the slide has no h1/h2 (card-layout slides headline
       // with h3 - run-20260911-002's slide_010 resolved no title at all).
-      title: pickEl(".slide-title", "h1, h2", "h3"),
-      subtitle: pickEl(".slide-subtitle", "h1 + p, h2 + p, .subtitle"),
-      body: pickAll(".slide-bullets li, .slide-body", "li, p"),
-      diagram: pickEl(".slide-diagram", "svg, .diagram, img"),
+      title: pickEl(scope, ".slide-title", "h1, h2", "h3"),
+      subtitle: pickEl(scope, ".slide-subtitle", "h1 + p, h2 + p, .subtitle"),
+      body: pickAll(scope, ".slide-bullets li, .slide-body", "li, p"),
+      diagram: pickEl(scope, ".slide-diagram", "svg, .diagram, img"),
       // Common big-number class names real decks use (`.stat-num` on
       // run-20260911-002's slides 5 and 7 resolved no stat, so their
       // stat_highlight template animated nothing).
-      stat: pickEl(".slide-stat, .slide-stat-number",
+      stat: pickEl(scope, ".slide-stat, .slide-stat-number",
                    "[data-stat], .stat, .stat-num, .stat-number, .stat-value, .metric-value"),
-      cta: pickEl(".slide-cta", "a.btn, button, .cta"),
+      cta: pickEl(scope, ".slide-cta", "a.btn, button, .cta"),
       // `.slide-diagram-node` is an explicit opt-in for a deck author who
       // wants to mark specific elements; pickAll's second tier
       // (findRepeatedSiblingGroup) covers the common case with no deck-
       // author effort - most decks express a "diagram" as a grid of N
       // sibling cards, not an <svg>/<img>.
-      nodes: pickAll(".slide-diagram-node", "__no_semantic_fallback__"),
+      nodes: pickAll(scope, ".slide-diagram-node", "__no_semantic_fallback__"),
     };
   }
 
@@ -133,8 +141,9 @@
   // localized automatically. Extraction runs against a `seek`-mode
   // injection so the timeline stays paused at 0 and stat/count-up text is
   // read pre-animation.
-  window.__extractRoles = function () {
-    var els = roleElements();
+  window.__extractRoles = function (scope) {
+    scope = scope || document;
+    var els = roleElements(scope);
     var textOf = function (el) { return el ? (el.textContent || "").trim() : null; };
     var nodes = (els.nodes || []).map(function (el) {
       return {
@@ -143,7 +152,7 @@
       };
     });
     var media = [];
-    var mediaEls = Array.prototype.slice.call(document.querySelectorAll("svg, img"));
+    var mediaEls = Array.prototype.slice.call(scope.querySelectorAll("svg, img"));
     for (var mi = 0; mi < mediaEls.length; mi++) {
       var mediaEl = mediaEls[mi];
       media.push({
@@ -338,17 +347,43 @@
     }
   }
 
+  function templateSteps(name, templates) {
+    templates = templates || window.__ANIMATION_TEMPLATES__ || {};
+    return (templates[name] || templates.feature_callout || {}).steps || [];
+  }
+
+  // Builds one slide's timeline against `scope` - the single construction
+  // path every engine uses, so what a seeking renderer draws is what the
+  // live engine plays. Paused unless `opts.paused === false`.
+  window.__motionBuildTimeline = function (scope, opts) {
+    opts = opts || {};
+    var tl = gsap.timeline(opts.paused === false ? undefined : { paused: true });
+    runTemplateSteps(tl, readTokens(scope), roleElements(scope), templateSteps(opts.template, opts.templates));
+    // Deliberately no .clearProps()/.reverse() - every engine relies on the
+    // timeline holding its final state for the rest of the slide (see
+    // gsap_animation_authoring SKILL.md).
+    return tl;
+  };
+
+  // Seek-mode entry point for one slide among several in one page
+  // (HyperFrames, plan B4): resolves roles inside `rootEl` only, registers
+  // the paused timeline as window.__timelines[slideId] for the renderer to
+  // seek, and never touches page visibility.
+  window.__motionRunSlide = function (rootEl, opts) {
+    opts = opts || {};
+    var tl = window.__motionBuildTimeline(rootEl, { template: opts.template, templates: opts.templates });
+    window.__timelines = window.__timelines || {};
+    window.__timelines[opts.slideId || "slide"] = tl;
+    return tl;
+  };
+
+  // Page-wide auto-run for a standalone slide page (slides/render.py's
+  // injection sets window.__ANIMATION_TEMPLATE__). Pages without that
+  // global - e.g. a HyperFrames composition calling __motionRunSlide per
+  // slide - are left alone.
   function run() {
+    if (window.__ANIMATION_TEMPLATE__ === undefined) return;
     var mode = window.__MOTION_MODE__ === "seek" ? "seek" : "live";
-    var name = window.__ANIMATION_TEMPLATE__ || "feature_callout";
-    var templates = window.__ANIMATION_TEMPLATES__ || {};
-    var steps = (templates[name] || templates.feature_callout || {}).steps || [];
-    var ds = readTokens();
-    var els = roleElements();
-    // "seek" (B3 #1): the same timeline the live engine plays, built paused
-    // and registered under the renderer-chosen slide id instead of played
-    // live for wall-clock capture. Same construction path either way, so
-    // what the seeked renderer draws is what the live engine played.
     // Live capture with a sentinel (window.__CAPTURE_SENTINEL_MS__, set
     // only by slides/render.py's capture injection) also starts paused:
     // the page shows a solid magenta overlay for that long before the
@@ -356,16 +391,16 @@
     // starts here" marker whatever the deck's own background colour is
     // (playwright_engine.py's lead-in detection keys on it).
     var sentinelMs = mode === "live" ? Number(window.__CAPTURE_SENTINEL_MS__ || 0) : 0;
-    var tl = gsap.timeline(mode === "seek" || sentinelMs > 0 ? { paused: true } : undefined);
-    runTemplateSteps(tl, ds, els, steps);
+    var tl;
     if (mode === "seek") {
-      var slideId = window.__ANIMATION_SLIDE_ID__ || "slide";
-      window.__timelines = window.__timelines || {};
-      window.__timelines[slideId] = tl;
+      tl = window.__motionRunSlide(document, {
+        slideId: window.__ANIMATION_SLIDE_ID__, template: window.__ANIMATION_TEMPLATE__,
+      });
+    } else {
+      tl = window.__motionBuildTimeline(document, {
+        template: window.__ANIMATION_TEMPLATE__, paused: sentinelMs > 0,
+      });
     }
-    // Deliberately no .clearProps()/.reverse() - the capture step relies on
-    // the timeline holding its final state for the rest of the recording
-    // (see gsap_animation_authoring SKILL.md).
 
     // The page is hidden (see the inline `html{visibility:hidden}` style
     // injected alongside this script) until this point, so the browser's

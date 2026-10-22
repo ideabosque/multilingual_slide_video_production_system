@@ -3,7 +3,20 @@
 Status: **Phases 0 and 1 implemented** (Phase 0 committed on
 `feature/phase0-hardening`; Phase 1, the engine seam, on
 `feature/phase1-engine-seam`, including the review fixes below). **Phase 2a
-(HyperFrames spike) done; results are in B4.** Phases 2b–8 approved, not started. Open
+(HyperFrames spike) done; results are in B4.** **Phase 2b (HyperFrames
+engine) in progress:**
+- done:
+  - per-slide runtime entry points (`__motionBuildTimeline`,
+    `__motionRunSlide`) with role resolution scoped to a slide root;
+  - `production/motion/hyperframes_engine.py` (slide → sub-composition
+    conversion, project build with frame-exact clip timing, `check` then
+    `render` with telemetry off, frame-count check, scale to the output
+    resolution);
+  - `render-motion --engine hyperframes`;
+- remaining: the real-deck render in English and one CJK language, the
+  side-by-side comparison with the Playwright baseline, and the docs.
+
+Phases 3–8 approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 
@@ -685,7 +698,7 @@ also never the `default_engine` unless that is decided explicitly.
   HyperFrames agent skills project-wide. Review them as reference, and copy in
   only what applies, following the earlier plan's approach of
   project-authored skills.
-- Update `pipeline-orchestrator-agent.md` and `slideshow-production-agent.md`
+- Update `pipeline-orchestrator.md` and `slideshow-production.md`
   dispatch tables.
 - Update README: Install (`msv motion install`), the CLI list, and an
   architecture note.
@@ -742,7 +755,7 @@ design.
 Agent 1: slide_analysis.json + localization_*.json        (unchanged)
    │
    ▼
-NEW motion-design-agent (once per deck, language-independent)
+NEW motion-design orchestrator skill (once per deck, language-independent)
    inputs:  original-deck screenshots, slide_analysis.json,
             layout_map.json (C4), default-language segment durations if available,
             design_system.yaml, the preset library
@@ -935,10 +948,15 @@ by name and falls back to its preset at render time.
 - Problems are reported per slide and language. A slide that fails in only
   one language falls back to its preset in that language only.
 
-### C7. Skills and agents
+### C7. Skills
 
-- **New agent `.claude/agents/motion-design-agent.md`** and **new skill
-  `deck_motion_design`**. The skill covers:
+All skills live in `.agents/skills/`. The former `.claude/agents/` subagents
+became orchestrator skills on 2026-10-22, so the motion designer is two
+skills, following the same pattern:
+
+- **New orchestrator skill `.agents/skills/motion_design/`** (the role,
+  its approval gate and what it dispatches) and **new procedure skill
+  `deck_motion_design`**. The procedure skill covers:
   - the process (C2, C6);
   - the language reference (C3), generated from the JSON schema so the docs
     can't drift from it;
@@ -948,10 +966,10 @@ by name and falls back to its preset at render time.
 
   It also tells the agent to use the existing `motion_design_principles` and
   `gsap_animation_authoring` skills as background knowledge.
-- **`pipeline-orchestrator-agent`:** dispatch motion design after Agent 1
+- **`pipeline-orchestrator`:** dispatch motion design after Agent 1
   when motion output is requested, report the motion gate in `pipeline
   status`, and add `approve-motion` to its human-gate handling.
-- **`language-rollout-agent`:** render motion for remaining languages only
+- **`language-rollout`:** render motion for remaining languages only
   once the motion gate is approved.
 - **Optional, unattended runs:** `msv motion design --headless` calls the
   Claude API with the same skill text. It exists for scheduled or
@@ -985,7 +1003,7 @@ real decks first (Open decision D5).
 | **3 — Remotion engine** | `motion/remotion/` project in deck-faithful IFrame + seek mode (B5), `@remotion/transitions`, `remotion_engine.py`, font and asset handling. The rebuilt-look template components are deferred (D4). | Reference deck renders in 2 languages; B6 passes; output matches HyperFrames frame-for-frame apart from transitions and overlays | 4–5 days |
 | **4 — Motion language and interpreter** (C3) | `motion-design/v1` JSON schema; interpreter in `animation_runtime.js` replacing the per-template engine; new seek-safe effects (`text_split`, `draw_svg`, `highlight`, `emphasis`, `path_connect`, `camera`, `exit`); transitions in all engines; migrate the 8 templates to presets; vendor SplitText and DrawSVG from the pinned `gsap` | All 8 presets render identically to before; every new effect passes the seek-determinism test; a hand-written sample design renders in all engines | 6–8 days |
 | **5 — Layout map and validation** (C4, C5) | `inspect-layout` (element tree, boxes, groups, SVG paths, annotated screenshots); `validate-motion` with every C5 guardrail; per-slide fallback to preset at render time | Deliberately invalid designs (bad target, bounce ease, 5 flashes per second, beat past the slide's end) are each rejected with a slide-named error; fallback verified | 4–5 days |
-| **6 — Motion design agent and gate** (C2, C6, C7) | `motion-design-agent` and `deck_motion_design` skill; `motion preview` and filmstrips; self-review loop; per-language check; `approve-motion` gate and `motion` state block; orchestrator and rollout wiring | On 2 real decks the agent produces a design that passes validation within 3 rounds and is approved by a human on first or second review; the rollout renders all languages from the approved design | 6–8 days |
+| **6 — Motion design skills and gate** (C2, C6, C7) | `motion_design` orchestrator skill and `deck_motion_design` procedure skill; `motion preview` and filmstrips; self-review loop; per-language check; `approve-motion` gate and `motion` state block; orchestrator and rollout wiring | On 2 real decks the agent produces a design that passes validation within 3 rounds and is approved by a human on first or second review; the rollout renders all languages from the approved design | 6–8 days |
 | **7 — QA, docs, decision** | `motion compare`, contact-sheet review across engines, B8 and C7 doc updates, CI matrix | Human sign-off; D1 decided and `default_engine` set | 2–3 days |
 | **8 — Optional** | Retire the Playwright capture engine if HyperFrames becomes the default; C8 custom-code escape hatch (D5); `motion design --headless`; Remotion rebuilt look (D4); revisit D2 and D3 | Gated on evidence from Phase 7 | — |
 

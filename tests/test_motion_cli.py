@@ -28,13 +28,13 @@ def test_render_motion_reports_unbuilt_engine_as_a_json_failure(tmp_path, monkey
     render_source_images(tmp_path / "slides", {"slide_001": "navy"})
     (tmp_path / "deck").mkdir()
     result = CliRunner().invoke(main, [
-        "production", "render-motion", "--engine", "hyperframes",
+        "production", "render-motion", "--engine", "remotion",
         "--production", str(production), "--translated-deck-dir", str(tmp_path / "deck"),
         "--animation-dir", str(tmp_path / "anim"), "--slides-dir", str(tmp_path / "slides"),
     ])
     payload = json.loads(result.output)
     assert payload["ok"] is False
-    assert "Phase 2b" in payload["errors"][0]
+    assert "Phase 3" in payload["errors"][0]
 
 
 def test_motion_install_explains_a_missing_lockfile(tmp_path, monkeypatch):
