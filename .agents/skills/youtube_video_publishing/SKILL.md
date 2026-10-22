@@ -40,7 +40,7 @@ config) video.
 | Input | Description |
 |---|---|
 | `run_id`, `project_id`, `language` | From Agent 4 |
-| `video` | Path to Agent 2's `slideshow.mp4` for this language |
+| `video` | Agent 2's video for this language: `production.json`'s `output_video` (the animated `video.mp4`; `slideshow.mp4` only if the static fallback was used) |
 | `localization` | Agent 1's `localization_<language>.json` (narration/slide context to draft metadata from) |
 | `production` | Agent 2's `production.json` (duration, etc.) |
 

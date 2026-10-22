@@ -299,25 +299,22 @@ def _build_audio_track(items: list[tuple[str, object]], output: Path, sample_rat
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def render_language(
+def _narrate(
     *,
     run_id: str,
     project_id: str,
     language: str,
-    source_deck: str,
-    slides_dir: str,
     localization_path: str,
     output_dir: str,
-    audio_dir: str | None = None,
-    burn_in_override: bool | None = None,
+    audio_dir: str | None,
+    logger: RunLogger,
 ) -> dict:
-    """Render one language's localized slideshow video. Returns the status
-    envelope dict (also written, plus production.json, to output_dir)."""
-    logger = RunLogger(run_id, project_id)
-    slides_path = Path(slides_dir).resolve()
-    if not slides_path.is_dir():
-        raise ProductionError(f"Rendered slides directory not found: {slides_path}")
-
+    """The narration half of producing a language, shared by
+    `narrate_language` (animation-first production, plan Part D2) and the
+    static `render_language` fallback: validate the localization and its
+    terminology, generate (or reuse) each slide's narration clip, lay out
+    the narration-driven timeline, and write the captions and the full
+    narration track. Renders no video."""
     localization = _load_json(localization_path)
     validation = schemas.validate_localization(localization, language=language)
     if not validation.ok:
@@ -363,8 +360,7 @@ def render_language(
     pronunciation = terminology.pronunciation_hints()
     extra_instructions = " ".join(f'Pronounce "{term}" as "{hint}".' for term, hint in pronunciation.items())
 
-    t0 = time.time()
-    segment_files: list[tuple[dict, Path, float, Path]] = []
+    segment_files: list[tuple[dict, Path, float]] = []
     segment_audio_keys: dict[str, str] = {}
     regenerated_segments: list[str] = []
     for seg in segments:
@@ -376,11 +372,7 @@ def render_language(
         segment_audio_keys[slide_id] = key
         if regenerated:
             regenerated_segments.append(slide_id)
-        dur = ffprobe_duration(str(seg_audio))
-        image_path = slides_path / f"{slide_id}.png"
-        if not image_path.exists():
-            raise ProductionError(f"missing rendered slide image for '{slide_id}': {image_path}")
-        segment_files.append((seg, seg_audio, dur, image_path))
+        segment_files.append((seg, seg_audio, ffprobe_duration(str(seg_audio))))
 
     pacing_cfg = video_cfg.get("pacing", {})
     slide_pause_seconds = float(pacing_cfg.get("slide_pause_seconds", 0.5))
@@ -388,7 +380,7 @@ def render_language(
     title_cfg = video_cfg.get("title_card", {})
     title_duration = float(title_cfg.get("duration_seconds", 3.0)) if title and title_cfg.get("enabled", True) else 0.0
 
-    segments_with_duration = [(seg, dur) for seg, _p, dur, _i in segment_files]
+    segments_with_duration = [(seg, dur) for seg, _p, dur in segment_files]
     timing, total_duration = compute_slide_timeline(
         segments_with_duration, title_duration=title_duration, slide_pause_seconds=slide_pause_seconds
     )
@@ -406,22 +398,158 @@ def render_language(
                 )
 
     captions_by_slide_id = {seg["slide_id"]: seg["caption"] for seg in segments}
-
     srt_path = output_path / "captions.srt"
     _write_srt(timing, captions_by_slide_id, title, srt_path)
+
+    narration_mp3 = output_path / "narration.mp3"
+    concat_list = output_path / "_narration_concat.txt"
+    concat_list.write_text(
+        "\n".join(f"file {concat_quote(p)}" for _s, p, _d in segment_files), encoding="utf-8"
+    )
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(narration_mp3)],
+        check=True, capture_output=True,
+    )
+    concat_list.unlink(missing_ok=True)
+
+    return {
+        "output_path": output_path,
+        "profile": profile,
+        "video_cfg": video_cfg,
+        "resolution": resolution,
+        "segments": segments,
+        "segment_files": segment_files,
+        "title": title,
+        "title_duration": title_duration,
+        "slide_pause_seconds": slide_pause_seconds,
+        "timing": timing,
+        "total_duration": total_duration,
+        "captions_by_slide_id": captions_by_slide_id,
+        "srt_path": srt_path,
+        "narration_mp3": narration_mp3,
+        "production": {
+            "run_id": run_id,
+            "project_id": project_id,
+            "language": language,
+            "title": title,
+            "narration_audio": str(narration_mp3),
+            "segment_audio_keys": segment_audio_keys,
+            "regenerated_segments": regenerated_segments,
+            "captions": str(srt_path),
+            "voice": profile.get("voice"),
+            "tts_model": model,
+            "total_duration_seconds": round(total_duration, 3),
+            "slides": [s["slide_id"] for s in segments],
+            "segment_timing": timing,
+            "pacing_warnings": pacing_warnings,
+        },
+    }
+
+
+def _source_deck_fields(source_deck: str) -> dict:
+    return {
+        "source_deck": str(Path(source_deck).resolve()),
+        "source_deck_fingerprint": directory_fingerprint(source_deck),
+        "source_deck_fingerprint_algo": FINGERPRINT_ALGO,
+    }
+
+
+def narrate_language(
+    *,
+    run_id: str,
+    project_id: str,
+    language: str,
+    source_deck: str,
+    localization_path: str,
+    output_dir: str,
+    audio_dir: str | None = None,
+) -> dict:
+    """The `tts` stage of animation-first production (plan Part D2): narrate
+    one language and write its production.json - timing, narration track,
+    captions - with no video yet. `msv production render-motion` then
+    renders the animated video against that timing and records it in the
+    same production.json. Returns the status envelope."""
+    logger = RunLogger(run_id, project_id)
+    t0 = time.time()
+    narration = _narrate(
+        run_id=run_id, project_id=project_id, language=language, localization_path=localization_path,
+        output_dir=output_dir, audio_dir=audio_dir, logger=logger,
+    )
+    production = {
+        **narration["production"],
+        **_source_deck_fields(source_deck),
+        "output_video": None,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    output_path = narration["output_path"]
+    (output_path / "production.json").write_text(
+        json.dumps(production, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    warnings = production["pacing_warnings"]
+    envelope = logger.status_envelope(
+        agent="slideshow_production_agent", language=language, status="completed",
+        outputs=production, warnings=warnings,
+    )
+    logger.log(
+        agent="slideshow_production_agent", skill="slideshow_video_production",
+        stage="tts", language=language, event="narration_completed", status="completed",
+        duration_seconds=time.time() - t0,
+        artifacts=[str(narration["narration_mp3"]), str(narration["srt_path"])], warnings=warnings,
+    )
+    return envelope
+
+
+def render_language(
+    *,
+    run_id: str,
+    project_id: str,
+    language: str,
+    source_deck: str,
+    slides_dir: str,
+    localization_path: str,
+    output_dir: str,
+    audio_dir: str | None = None,
+    burn_in_override: bool | None = None,
+) -> dict:
+    """Render one language's static slideshow video (the fallback to
+    animation-first production): narration via `_narrate`, then each
+    slide's rendered image held for its narration. Returns the status
+    envelope dict (also written, plus production.json, to output_dir)."""
+    logger = RunLogger(run_id, project_id)
+    slides_path = Path(slides_dir).resolve()
+    if not slides_path.is_dir():
+        raise ProductionError(f"Rendered slides directory not found: {slides_path}")
+
+    t0 = time.time()
+    narration = _narrate(
+        run_id=run_id, project_id=project_id, language=language, localization_path=localization_path,
+        output_dir=output_dir, audio_dir=audio_dir, logger=logger,
+    )
+    output_path = narration["output_path"]
+    video_cfg, resolution = narration["video_cfg"], narration["resolution"]
+    timing, total_duration = narration["timing"], narration["total_duration"]
+    title_duration, slide_pause_seconds = narration["title_duration"], narration["slide_pause_seconds"]
+
+    image_paths = []
+    for seg, _audio, _dur in narration["segment_files"]:
+        image_path = slides_path / f"{seg['slide_id']}.png"
+        if not image_path.exists():
+            raise ProductionError(f"missing rendered slide image for '{seg['slide_id']}': {image_path}")
+        image_paths.append(image_path)
 
     burn_in_cfg = video_cfg.get("captions", {}).get("burn_in", True)
     burn_in = burn_in_cfg if burn_in_override is None else burn_in_override
     ass_path = None
     if burn_in:
         ass_path = output_path / "captions.ass"
-        _write_ass(timing, captions_by_slide_id, title, profile, video_cfg, resolution, ass_path)
+        _write_ass(timing, narration["captions_by_slide_id"], narration["title"], narration["profile"],
+                   video_cfg, resolution, ass_path)
 
     # ---------- video: title card (reuses slide 1's image) + every slide's image, each held for its computed duration ----------
     image_items: list[tuple[Path, float]] = []
-    if title_duration > 0 and segment_files:
-        image_items.append((segment_files[0][3], title_duration))
-    for _seg, _audio, dur, image_path in segment_files:
+    if title_duration > 0 and image_paths:
+        image_items.append((image_paths[0], title_duration))
+    for (_seg, _audio, dur), image_path in zip(narration["segment_files"], image_paths):
         image_items.append((image_path, dur + slide_pause_seconds))
 
     silent_video = output_path / "_silent.mp4"
@@ -431,7 +559,7 @@ def render_language(
     audio_items: list[tuple[str, object]] = []
     if title_duration > 0:
         audio_items.append(("silence", title_duration))
-    for _seg, seg_audio, _dur, _image in segment_files:
+    for _seg, seg_audio, _dur in narration["segment_files"]:
         audio_items.append(("file", seg_audio))
         if slide_pause_seconds > 0:
             audio_items.append(("silence", slide_pause_seconds))
@@ -456,43 +584,18 @@ def render_language(
     silent_video.unlink(missing_ok=True)
     full_audio_track.unlink(missing_ok=True)
 
-    narration_mp3 = output_path / "narration.mp3"
-    concat_list = output_path / "_narration_concat.txt"
-    concat_list.write_text(
-        "\n".join(f"file {concat_quote(p)}" for _s, p, _d, _i in segment_files), encoding="utf-8"
-    )
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(narration_mp3)],
-        check=True, capture_output=True,
-    )
-    concat_list.unlink(missing_ok=True)
-
     out_duration = ffprobe_duration(str(output_video))
     tolerance = float(video_cfg.get("sync", {}).get("max_duration_drift_seconds", 0.75))
     duration_ok = abs(out_duration - total_duration) <= tolerance
 
     production = {
-        "run_id": run_id,
-        "project_id": project_id,
-        "language": language,
-        "title": title,
-        "source_deck": str(Path(source_deck).resolve()),
-        "source_deck_fingerprint": directory_fingerprint(source_deck),
-        "source_deck_fingerprint_algo": FINGERPRINT_ALGO,
-        "narration_audio": str(narration_mp3),
-        "segment_audio_keys": segment_audio_keys,
-        "regenerated_segments": regenerated_segments,
-        "captions": str(srt_path),
+        **narration["production"],
+        **_source_deck_fields(source_deck),
         "captions_ass": str(ass_path) if ass_path else None,
         "output_video": str(output_video),
-        "voice": profile.get("voice"),
-        "tts_model": model,
-        "total_duration_seconds": round(total_duration, 3),
+        "video_kind": "static_slideshow",
         "output_duration_seconds": out_duration,
-        "slides": [s["slide_id"] for s in segments],
-        "segment_timing": timing,
         "burn_in": burn_in,
-        "pacing_warnings": pacing_warnings,
         "duration_check_ok": duration_ok,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -500,6 +603,7 @@ def render_language(
         json.dumps(production, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
+    pacing_warnings = production["pacing_warnings"]
     envelope = logger.status_envelope(
         agent="slideshow_production_agent", language=language, status="completed",
         outputs=production, warnings=pacing_warnings,
@@ -508,7 +612,7 @@ def render_language(
         agent="slideshow_production_agent", skill="slideshow_video_production",
         stage="tts", language=language, event="render_completed", status="completed",
         duration_seconds=time.time() - t0,
-        artifacts=[str(output_video), str(srt_path), str(narration_mp3)],
+        artifacts=[str(output_video), str(narration["srt_path"]), str(narration["narration_mp3"])],
         warnings=pacing_warnings,
     )
     return envelope

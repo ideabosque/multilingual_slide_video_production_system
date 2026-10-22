@@ -50,21 +50,53 @@ def get_engine(name: str) -> MotionEngine:
     )
 
 
+def _record_in_production(
+    production_file: Path, final: Path, motion_path: Path, engine_name: str, post_info: dict[str, Any],
+    ctx: Any,
+) -> None:
+    """Make the animated video this language's production video: the fields
+    `msv production validate` and publishing read."""
+    production = json.loads(production_file.read_text(encoding="utf-8"))
+    duration = post_info["final_duration_seconds"]
+    production.update({
+        "output_video": str(final),
+        "video_kind": "animated",
+        "motion_engine": engine_name,
+        "animation_style": ctx.motion_config.get("animation_style", "calm"),
+        "motion_manifest": str(motion_path),
+        "captions_motion": post_info["captions_srt"],
+        "output_duration_seconds": duration,
+        "duration_check_ok": abs(duration - ctx.total_duration) <= ctx.max_duration_drift_seconds,
+        "burn_in": post_info["burn_in"],
+        "rendered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+    production_file.write_text(json.dumps(production, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def render_motion(
     *,
     production_path: str,
     translated_deck_dir: str,
     animation_dir: str,
-    slides_dir: str,
+    slides_dir: str | None = None,
     localization_path: str | None = None,
     roles_path: str | None = None,
     output_dir: str | None = None,
     output_name: str | None = None,
     engine_name: str | None = None,
     viewport: str = "1920x1080",
+    record_in_production: bool = True,
 ) -> dict[str, Any]:
-    """Render one language's `marketing_<engine>.mp4` from an already-
-    completed `production.json` (B1's sequential dependency stays).
+    """Render one language's animated video (default `video.mp4`) against
+    the narration timing in its `production.json` - the `rendering` stage
+    of animation-first production (plan Part D2), which runs after
+    `msv production narrate`.
+
+    With `record_in_production` (the default), the finished video is
+    recorded back into that production.json (`output_video`, duration
+    check, engine, manifest), so `msv production validate` and publishing
+    use it. The legacy `render-marketing-animation` alias passes False: it
+    renders a side artifact next to an existing static slideshow.
 
     Returns a status envelope whose `outputs` carries the manifest keys the
     previous monolithic renderer produced, plus the engine/motion.json
@@ -96,7 +128,7 @@ def render_motion(
     production_file = Path(production_path).resolve()
     out_dir = Path(output_dir).resolve() if output_dir else production_file.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_name = output_name or f"marketing_{engine_name}.mp4"
+    output_name = output_name or "video.mp4"
     work_dir = out_dir / f"_motion_{engine_name}_work"
     work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,6 +208,10 @@ def render_motion(
         "validation_ok": True,
         "generated_at": motion_manifest["generated_at"],
     }
+
+    if record_in_production:
+        _record_in_production(production_file, final, motion_path, engine_name, post_info, ctx)
+        result["recorded_in_production"] = str(production_file)
 
     envelope = logger.status_envelope(
         agent="slideshow_production_agent", language=language, status="completed",

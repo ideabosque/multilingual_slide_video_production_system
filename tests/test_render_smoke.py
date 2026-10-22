@@ -102,3 +102,23 @@ def test_rerender_reuses_audio_and_regenerates_only_edited_slide(render_inputs):
 
     production = json.loads((render_inputs["out"] / "production.json").read_text(encoding="utf-8"))
     assert production["regenerated_segments"] == ["slide_002"]
+
+
+def test_narrate_language_writes_timing_and_audio_without_a_video(render_inputs):
+    """Animation-first production's `tts` stage: narration, timing and
+    captions in production.json, no video rendered (render-motion does that)."""
+    envelope = render_slideshow.narrate_language(
+        run_id="run-smoke", project_id="proj", language="en-US",
+        source_deck=str(render_inputs["deck"]), localization_path=str(render_inputs["localization"]),
+        output_dir=str(render_inputs["out"]),
+    )
+    assert envelope["status"] == "completed"
+    out = render_inputs["out"]
+    production = json.loads((out / "production.json").read_text(encoding="utf-8"))
+    assert production["output_video"] is None
+    assert not (out / "slideshow.mp4").exists()
+    assert (out / "narration.mp3").exists() and (out / "captions.srt").exists()
+    assert [t["kind"] for t in production["segment_timing"]] == ["title", "slide", "slide"]
+    assert production["total_duration_seconds"] == pytest.approx(6.0, abs=0.1)
+    assert production["source_deck_fingerprint_algo"]
+    assert render_inputs["encodes"] == []   # no slide-video encode at all

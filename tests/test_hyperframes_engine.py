@@ -91,6 +91,11 @@ def test_build_project_layout_and_frame_exact_clip_timing(tmp_path, monkeypatch)
     assert [round(d * 30) for d in durations] == [30, 46, 74]
     assert built["total_frames"] == 150
 
+    # the title card is animated from slide 1's own markup - no screenshots
+    title = (project / "compositions" / "title.html").read_text(encoding="utf-8")
+    assert "title_backdrop" in title and "blur(" in title and "Alpha deck" in title
+    assert not (project / "title.png").exists()
+
 
 @pytest.mark.requires_node
 @pytest.mark.requires_ffmpeg
@@ -115,11 +120,15 @@ def test_render_motion_with_hyperframes_end_to_end(tmp_path, monkeypatch):
     )
     assert envelope["status"] == "completed"
     out = ctx.production_path.parent
-    motion = json.loads((out / "marketing_hyperframes.motion.json").read_text(encoding="utf-8"))
+    motion = json.loads((out / "video.motion.json").read_text(encoding="utf-8"))
     assert motion["engine"]["name"] == "hyperframes" and motion["engine"]["version"]
     assert motion["validation"]["ok"] is True, motion["validation"]["errors"]
     assert not any(c["sentinel"] for c in motion["validation"]["boundary_checks"])
-    assert (out / "marketing_hyperframes.mp4").exists()
+    assert (out / "video.mp4").exists()
+    # rendering is the production render: the video is recorded in production.json
+    production = json.loads(ctx.production_path.read_text(encoding="utf-8"))
+    assert production["output_video"].endswith("video.mp4") and production["video_kind"] == "animated"
+    assert production["motion_engine"] == "hyperframes" and production["duration_check_ok"] is True
     assert not (out / "_motion_hyperframes_work").exists()
 
 

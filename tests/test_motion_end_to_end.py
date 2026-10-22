@@ -67,10 +67,10 @@ def test_render_motion_playwright_end_to_end(tmp_path, monkeypatch, white_backgr
             engine_name="playwright",
         )
         assert envelope["status"] == "completed"
-        motion = json.loads((tmp_path / "out" / "marketing_playwright.motion.json").read_text(encoding="utf-8"))
+        motion = json.loads((tmp_path / "out" / "video.motion.json").read_text(encoding="utf-8"))
         assert motion["engine"]["name"] == "playwright" and motion["fps"] == 30
         assert motion["validation"]["ok"] is True, motion["validation"]["errors"]
-        srt = (tmp_path / "out" / "marketing_playwright_captions.srt").read_text(encoding="utf-8")
+        srt = (tmp_path / "out" / "video_captions.srt").read_text(encoding="utf-8")
         assert srt.count(" --> ") == 3  # title + 2 captions
         assert not (tmp_path / "out" / "_motion_playwright_work").exists()
         assert not any(c["sentinel"] for c in motion["validation"]["boundary_checks"])
@@ -82,7 +82,7 @@ def test_render_motion_playwright_end_to_end(tmp_path, monkeypatch, white_backgr
         # blank clips on some environments) must fail as a VALIDATION
         # failure with slide-named errors and an inspectable motion.json -
         # never as a crash, and never as a silently-broken video.
-        motion = json.loads((tmp_path / "out" / "marketing_playwright.motion.json").read_text(encoding="utf-8"))
+        motion = json.loads((tmp_path / "out" / "video.motion.json").read_text(encoding="utf-8"))
         assert motion["validation"]["ok"] is False
         assert "slide_001" in " ".join(motion["validation"]["errors"])
 
@@ -104,6 +104,8 @@ def test_alias_keeps_the_legacy_contract(tmp_path, monkeypatch):
         assert legacy["output_video"].endswith("marketing_animation.mp4")
         assert set(legacy["templates"]) == {"slide_001", "slide_002"}
         assert legacy["duration_seconds"] == pytest.approx(4.0, abs=0.3)
+        # the alias renders a side artifact: production.json is left alone
+        assert "video_kind" not in json.loads(production.read_text(encoding="utf-8"))
     except MotionError:
         # Same loud-refusal shape as above, on the alias path.
         motion = json.loads((tmp_path / "out" / "marketing_animation.motion.json").read_text(encoding="utf-8"))

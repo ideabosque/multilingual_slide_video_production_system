@@ -1,6 +1,6 @@
 ---
 name: slideshow-video-production
-description: Voice and slideshow production skill for Agent 2. Applies Agent 1's per-language slide translations back into the original English HTML deck, renders the translated deck to screenshots via headless Chromium, generates narration via OpenAI TTS, and assembles a publication-ready localized MP4 slideshow with FFmpeg. Use when producing, re-rendering, or re-recording narration/captions for one specific language of a slide deck.
+description: Video production procedure for Agent 2 (followed by the slideshow-production orchestrator skill). Applies Agent 1's per-language slide translations back into the original English HTML deck, narrates it via OpenAI TTS, and renders the language's animated video in one pass with HyperFrames (playful GSAP motion, burned-in captions, narration). Use when producing, re-rendering, or re-recording narration/captions for one specific language of a slide deck.
 ---
 
 # Slideshow Video Production Skill
@@ -13,10 +13,20 @@ video-frame compositing with HTML-deck translation + browser rendering.
 ## Purpose
 
 Convert Agent 1's structured, per-language localization output into the
-final localized slideshow video: a translated HTML deck, rendered slide
-images, narration audio, synchronized captions, and an assembled MP4 —
+final localized video: a translated HTML deck, narration audio,
+synchronized captions, and an **animated** MP4 rendered in one pass —
 without ever touching a previously translated or rendered deck as the
 base.
+
+**Animation-first (since 2026-10-22, plan Part D).** The language's video
+is the animated render: `msv production narrate` (stage `tts`) then
+`msv production render-motion` (stage `rendering`). There is no static
+slideshow pass first. `msv production render-slideshow` (static slide
+images held for their narration) remains only as a fallback, used when
+the user explicitly asks for a static video or the motion engine is
+unavailable. The review gates are unchanged: the default language is
+reviewed before the other languages render, and nothing publishes
+without approval.
 
 ## Non-negotiable rules
 
@@ -127,11 +137,12 @@ any change to this path. Do not reintroduce `-vsync vfr` here at any fps.
 | `language` | Target language code, must exist in `config/languages.yaml` |
 | `source_deck` | Path to the clean original deck directory |
 | `localization` | Path to Agent 1's `localization_<language>.json` |
-| `output_dir` | Where to write `slideshow.mp4`, `narration.mp3`, `captions.srt`, `production.json` |
+| `output_dir` | Where to write `video.mp4`, `narration.mp3`, `captions.srt`, `production.json` |
+| animation bundle | `state/<run_id>/analysis/slides/animation` (`msv slides generate-animation`, once per deck) |
 
 Optional: `--audio-dir` (reuse pre-generated per-slide mp3s named
-`<slide_id>.mp3`), `--no-burn-in` (soft-sub only). `render-slideshow`
-itself takes no viewport option — the viewport used to screenshot
+`<slide_id>.mp3`). For the static fallback only: `--no-burn-in` (soft-sub
+only), and `render-slideshow` takes no viewport option — the viewport used to screenshot
 `slides_dir` (`msv slides render-images --viewport ...`, default
 `1920x1080`) must simply match `VIDEO_RESOLUTION`'s width/height in
 `config/video.yaml`, or the scale filter here will be doing real
@@ -142,13 +153,17 @@ resizing instead of a no-op (see `.env.example`'s `SLIDE_VIEWPORT`).
 ```
 state/<run_id>/analysis/slides/
 ├── translated_<language>/slide_001.html   # msv slides apply-translations
-└── rendered_<language>/slide_001.png      # msv slides render-images
+├── animation/                             # msv slides generate-animation (once per deck)
+└── rendered_<language>/slide_001.png      # static fallback only (msv slides render-images)
 
 output/<run_id>/<language>/
-├── slideshow.mp4
+├── video.mp4            # the animated video (render-motion) - what gets published
+├── video.motion.json    # engine, style, per-slide timing, validation record
+├── video_captions.srt
 ├── narration.mp3        # full narration, concatenated in slide order
 ├── captions.srt
-├── captions.ass         # only when burn_in is enabled
+├── slideshow.mp4        # static fallback only (render-slideshow)
+├── captions.ass         # static fallback only, when burn_in is enabled
 ├── segments/*.mp3        # per-slide narration clips (reusable)
 ├── segments/*.json       # per-clip cache key sidecars (narration/voice/model/instructions hash)
 └── production.json
@@ -169,11 +184,13 @@ The `msv` CLI, groups `msv slides` and `msv production`:
   — applies `slide_translations` back into the original HTML by node ID;
   fails loudly if a node ID in the localization file doesn't exist in the
   deck (structure changed since Agent 1 analyzed it).
-- `msv slides render-images --deck-dir <translated_<lang>_dir> --out <rendered_<lang>_dir> [--viewport 1920x1080]`
-  — same Chromium screenshot tool Agent 1 uses, now against the
-  translated deck; its output is the actual video frame source.
-- `msv production render-slideshow --run-id ... --project-id ... --language ... --slides-dir ... --localization ... --output-dir ...`
-  — the renderer described above.
+- `msv production narrate --run-id ... --project-id ... --language ... --source-deck ... --localization ... --output-dir ...`
+  — stage `tts`: narration, timing, captions, production.json (no video).
+- `msv production render-motion --production ... --translated-deck-dir ... --animation-dir ... --localization ... [--engine hyperframes|playwright]`
+  — stage `rendering`: the animated video, recorded in production.json.
+- `msv motion doctor` — checks Node, HyperFrames, ffmpeg and Chromium.
+- Static fallback: `msv slides render-images --deck-dir <translated_<lang>_dir> --out <rendered_<lang>_dir>`
+  then `msv production render-slideshow --run-id ... --project-id ... --language ... --slides-dir ... --localization ... --output-dir ...`.
 - `msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]`
   — post-render validation.
 - OpenAI TTS API (`OPENAI_API_KEY`, `TTS_MODEL`/`config/languages.yaml`
@@ -193,35 +210,56 @@ terms, pronunciation hints).
 
 ## Execution procedure
 
-1. Resolve `source_deck`. `msv slides apply-translations` always deletes
-   and fully recreates `translated_<language>/` from the original deck
-   before writing anything (`apply_translations.py`'s
-   `shutil.rmtree`+`shutil.copytree`) — a leftover directory from a stale
-   prior run is never partially reused or trusted, it's simply
-   overwritten (see non-negotiable rules).
-2. Load and validate the localization JSON
-   (`multilingual_slide_video_agent.schemas.validate_localization`)
-   against `slides/manifest.json` — this checks `title` is present, every
-   `slide_translations` node ID resolves, and warns on overlong/duplicate
-   captions.
-3. Run the terminology check on every slide's narration, caption,
-   translated text, and the title.
-4. `msv slides apply-translations`, then `msv slides render-images` on
-   the result.
-5. For each slide: reuse or generate its narration clip; measure its
-   real duration.
-6. Compute each slide's on-screen duration
-   (`narration_duration + pacing.slide_pause_seconds`) and resulting
-   `start_time`/`end_time` in the assembled timeline (see "Slide duration
-   is narration-driven").
-7. Write `captions.srt` (always, including the title as its first cue)
-   and `captions.ass` (if burn-in enabled — title in its own larger
-   `Title` style, captions in `Default`, both auto-wrapping).
-8. Render the final MP4 with `ffmpeg`: the title card held for a fixed
-   duration, then each slide's PNG held for its computed duration with
-   its narration audio, concatenated in slide order.
-9. Concatenate segment clips into `narration.mp3` for reference/reuse.
-10. Write `production.json` and print the status envelope.
+One language per run. Stages in order: `translation` → `tts` → `rendering`
+→ `validation`. Record each one with `msv pipeline set-stage`.
+
+1. **`translation`:** `msv slides apply-translations --deck-dir <original>
+   --localization <localization_<lang>.json> --out
+   state/<run_id>/analysis/slides/translated_<lang>`. It always deletes and
+   fully recreates `translated_<lang>/` from the original deck, so a
+   leftover directory from a stale run is never partially reused (see
+   non-negotiable rules).
+2. **`tts`:** `msv production narrate --run-id ... --project-id ...
+   --language <lang> --source-deck <original> --localization ...
+   --output-dir output/<run_id>/<lang>`. It:
+   - validates the localization and checks terminology on every
+     narration, caption and the title, before any TTS spend;
+   - reuses or generates each slide's narration clip (cached per slide by
+     a hash of narration, voice, model and instructions);
+   - lays out the narration-driven timeline (title card, then each slide
+     for its narration plus `pacing.slide_pause_seconds`);
+   - writes `captions.srt`, `narration.mp3` and `production.json` (with
+     `output_video: null`). No video yet.
+3. **`rendering`:** `msv production render-motion --production
+   output/<run_id>/<lang>/production.json --translated-deck-dir
+   state/<run_id>/analysis/slides/translated_<lang> --animation-dir
+   state/<run_id>/analysis/slides/animation --localization ...`.
+   - It uses the engine and style in `config/motion.yaml`: HyperFrames,
+     playful. The animation bundle comes from `msv slides
+     generate-animation`, run once per deck (see below).
+   - Each slide animates for exactly its narration-driven duration; the
+     title card is slide 1's own markup, blurred, behind the title.
+   - Captions are burned in, the narration is muxed, and validation runs:
+     exact length, no flash frames, and every slide visibly animates.
+   - It writes `video.mp4` plus `video.motion.json`, and records the video
+     in `production.json` (`output_video`, `video_kind: animated`,
+     `duration_check_ok`).
+4. **`validation`:** `msv production validate --production
+   output/<run_id>/<lang>/production.json`.
+5. Print the status envelope, including any pacing warnings.
+
+**Animation bundle (once per deck):** `msv slides generate-animation
+--deck-dir <original> --out state/<run_id>/analysis/slides/animation
+[--slide-analysis ...]`. It assigns each slide a template (Agent 1's
+`visual_role`, otherwise a deterministic heuristic). Reuse an existing
+bundle that still matches the deck. The motion *style* is not in the
+bundle: it comes from `config/motion.yaml` at render time.
+
+**Static fallback** (only on explicit request, or when `msv motion doctor`
+shows the engine unavailable): `msv slides render-images` on the translated
+deck, then `msv production render-slideshow ... --slides-dir
+<rendered_<lang>/>`. It writes `slideshow.mp4` and records it in
+`production.json`.
 
 ## Validation criteria (enforced by `msv production validate`)
 
@@ -259,44 +297,19 @@ terms, pronunciation hints).
   a retry after a transient TTS/ffmpeg failure reuses whatever already
   exists rather than regenerating everything.
 
-## Optional alternate output: GSAP-animated marketing video
+## Legacy: `render-marketing-animation`
 
-Separate from everything above and **not part of the tracked pipeline
-stages** (`translation`/`rendering`/`tts`/`validation`/`publishing`) — see
-`docs/marketing-animation-pipeline-plan.md` for the full design. Only
-triggered when the user explicitly asks for an animated/motion-graphics
-version of an already-rendered language, never automatically. Two steps:
+Before animation-first production, the animated video was an optional side
+artifact rendered *after* a static slideshow. `msv production
+render-marketing-animation` keeps that contract: Playwright engine,
+`marketing_animation.mp4` next to an existing `slideshow.mp4`, and
+`production.json` left unchanged. Don't use it for new runs; `render-motion`
+is the production render.
 
-1. **`msv slides generate-animation --deck-dir <original_deck> --out state/<run_id>/analysis/slides/animation/ [--slide-analysis ...]`**
-   (usually run once, alongside Agent 1's `slide_analysis.json`, not
-   per-language) — assigns each slide a named GSAP shot template
-   (`title_reveal`/`feature_callout`/`stat_highlight`/`diagram_build`/`closing`,
-   see `.agents/skills/motion_design_principles/SKILL.md`'s role table)
-   and writes the reusable animation bundle (GSAP itself, the shared
-   `animation_runtime.js`, and `config/design_system.yaml`'s tokens as CSS
-   custom properties). This step targets the **original** deck's
-   structure, not any one language's translation, so it never needs
-   re-running per language and rarely needs re-running per run.
-2. **`msv production render-marketing-animation --production <production.json> --translated-deck-dir <translated_<lang>/> --animation-dir <animation bundle> --slides-dir <rendered_<lang>/> [--localization ...] [--output-name marketing_animation.mp4]`**
-   — requires that language's `production.json` to already exist (this
-   stays sequentially dependent on `render-slideshow` having already run,
-   reusing its narration audio and `segment_timing` rather than
-   regenerating TTS or re-deciding pacing). Injects the animation bundle
-   into that language's already-translated deck, captures each slide as a
-   short video clip via Playwright's native video recording (each
-   template's entrance animation plays once, then holds its final state
-   for the rest of that slide's narration-driven duration — see
-   `.agents/skills/gsap_animation_authoring/SKILL.md`), muxes each clip
-   with its own narration segment and caption, and concatenates the whole
-   sequence (title card first, held on slide 1's static rendered image
-   with the burned-in Title caption style, same as the non-animated
-   title card) into one MP4.
-
-A browser console error during capture (a bug in the generated animation)
-fails the whole render loudly, naming the slide — this is deliberately not
-a soft warning, since a silently-broken animation (e.g. a selector that
-never matches) wouldn't be visible from the output file itself without
-frame-by-frame review.
+A browser or composition script error during any render fails it loudly
+and names the slide. That's deliberately not a soft warning: a
+silently broken animation (e.g. a selector that never matches) isn't
+visible from the output file without frame-by-frame review.
 
 ## Handoff contract
 

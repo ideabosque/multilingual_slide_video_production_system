@@ -7,8 +7,14 @@ Status: **Phases 0 and 1 implemented** (Phase 0 committed on
 `hyperframes_engine.py`, `render-motion --engine hyperframes`. The 14-slide
 reference deck renders cleanly (frame-exact, every slide passes, about real
 time). **Direction changed 2026-10-22: animation-first, playful style (Part
-D).** D1 (the playful style) is built and has a 4-slide sample; D2 (one-pass
-production pipeline) is next.
+D).** D1 (the playful style) is built, tuned more energetic, then calmed so
+landed objects don't shake (no ambient float, no elastic wobble). D2
+(one-pass production) is built: `msv production narrate` (tts), then
+`render-motion` (rendering) records the animated `video.mp4` in
+production.json; stage order is now tts before rendering; HyperFrames'
+title card is animated from slide 1's markup; skills and README updated.
+Both review gates are unchanged (requested 2026-10-22). Remaining in D2: a
+full real-deck one-pass run.
 
 Phases 3–8 approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see

@@ -26,8 +26,9 @@ src/multilingual_slide_video_agent/
   state.py               per-run pipeline state machine (state/<run_id>.json)
   slides/                node-ID text extraction, translation, Chromium rendering,
                          animation bundle (assets/animation_runtime.js, vendor/gsap.min.js)
-  production/            render_slideshow.py (canonical slideshow.mp4), captions.py,
-                         motion/ (engine seam: context, engines, post-pass, validation)
+  production/            render_slideshow.py (narrate_language = stage tts; render_language =
+                         static fallback), captions.py, motion/ (stage rendering: the
+                         animated video - engines, post-pass, validation)
   publishing/            YouTube upload / OAuth
 config/                  languages, terminology, video, motion, design system, animation templates
 .agents/skills/          all skills: 5 orchestrator skills + the procedure skills they follow
@@ -166,5 +167,9 @@ per-deck motion. Its status block says what is built.
   outward-facing.
 - Don't commit `.env`, client-secret JSON files, or anything under `state/`,
   `output/` or `logs/`.
-- Don't change `slideshow.mp4`'s rendering path as part of motion work. It
-  is the shipped, pipeline-tracked deliverable (plan Open decision D3).
+- Production is animation-first (plan Part D): a language's video is the
+  animated render, produced in one pass (`narrate` then `render-motion`).
+  Don't reintroduce a static-video-first step, and keep both review gates
+  (default language first, approval before publishing). Landed elements
+  hold still: no continuous bobbing or elastic wobble in the playful
+  style (feedback: it read as shaking).

@@ -7,13 +7,17 @@ directly; Agents 1-3 report results back to it via their status
 envelopes and Agent 4 records the outcome here.
 
 STAGES models the per-language pipeline: analysis (Agent 1) -> translation
--> rendering -> tts -> validation -> publishing (Agents 2/3). Agent 2's
-work is split into three stages (translation, rendering, tts) rather than
-one, because a targeted rerun of just one of those (e.g. re-screenshotting
-after a CSS tweak, without regenerating narration) is a real scenario -
-same reasoning as the video-source sibling project splitting tts/rendering.
-A stage only becomes eligible to run once every earlier stage for that
-language is "completed" or "skipped" (see `next_actions`).
+-> tts -> rendering -> validation -> publishing (Agents 2/3). Production is
+animation-first (motion-engines-and-hardening-plan Part D2): `tts` is
+`msv production narrate` (narration audio + the narration-driven slide
+timing, no video), then `rendering` is `msv production render-motion`,
+which renders the animated video against that timing - so tts has to come
+first. Agent 2's work stays split into separate stages so a targeted rerun
+of one (e.g. re-rendering after a template change, without regenerating
+narration) is possible. Before 2026-10-22 the order was translation ->
+rendering -> tts (static screenshots first, then a slideshow built around
+the narration). A stage only becomes eligible to run once every earlier
+stage for that language is "completed" or "skipped" (see `next_actions`).
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ FINGERPRINT_ALGO = "content-v1"
 # run before failing loudly (parallel language rollout contends here).
 _LOCK_TIMEOUT_SECONDS = 30
 
-STAGES =["analysis", "translation", "rendering", "tts", "validation", "publishing"]
+STAGES = ["analysis", "translation", "tts", "rendering", "validation", "publishing"]
 TERMINAL_OK_STATUSES = {"completed", "skipped"}
 STAGE_STATUSES = {"pending", "in_progress", "completed", "failed", "skipped", "ready_for_review"}
 

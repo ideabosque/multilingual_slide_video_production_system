@@ -57,7 +57,7 @@ success/failure so this is safe to drive from Bash.
 | `rerun_language` | `msv pipeline rerun-language --language ...` | Reset one language from a given stage onward, then resume |
 | `rerun_stage` | `msv pipeline rerun-stage --stage ...` | Reset one stage (one or all languages), then resume |
 | `validate_pipeline` | `msv pipeline validate` | Consistency check: source deck still present/unchanged, no orphaned in-progress stages, retry budgets |
-| *(production review)* | `msv pipeline approve-production` | Human-approved release of every non-default language's `translation`/`rendering`/`tts` stages, after reviewing the default language's render — see "Default-language-first production gate" |
+| *(production review)* | `msv pipeline approve-production` | Human-approved release of every non-default language's `translation`/`tts`/`rendering` stages, after reviewing the default language's render — see "Default-language-first production gate" |
 | `publish_pending` | `msv pipeline approve-publish` then run `publishing` actions | Human-approved release of videos held at `ready_for_review` |
 
 ## The run loop (what `run_pipeline` / `resume_pipeline` actually do)
@@ -90,11 +90,11 @@ success/failure so this is safe to drive from Bash.
 | Stage | Skill invoked | What Agent 4 does |
 |---|---|---|
 | `analysis` | `slide_deck_localization` | Follow that skill's procedure once per run (its output covers every language); on success, `set-stage` each language's `analysis` to `completed` with the `localization_<language>.json` path as an artifact |
-| `translation` + `rendering` + `tts` (default language, or a single targeted rerun) | `slideshow_video_production` | Dispatch `slideshow-production` directly for that one language; it runs `msv slides apply-translations`/`render-images` and `msv production render-slideshow`/`validate`, and records its own `translation`/`rendering`/`tts`/`validation` stages |
-| `translation` + `rendering` + `tts` (every other language, bulk) | `multilingual_rollout` | Once the production gate opens (see below), dispatch `language-rollout` **once** — it fans out to `slideshow-production` per remaining language itself; do not loop through these languages yourself |
+| `translation` + `tts` + `rendering` (default language, or a single targeted rerun) | `slideshow_video_production` | Dispatch `slideshow-production` directly for that one language; it runs `msv slides apply-translations`, `msv production narrate` (tts), `msv production render-motion` (rendering: the animated video, in one pass) and `msv production validate`, and records its own `translation`/`tts`/`rendering`/`validation` stages |
+| `translation` + `tts` + `rendering` (every other language, bulk) | `multilingual_rollout` | Once the production gate opens (see below), dispatch `language-rollout` **once** — it fans out to `slideshow-production` per remaining language itself; do not loop through these languages yourself |
 | `validation` | (this skill, or already handled above) | `slideshow-production` validates as part of its own dispatch (both for the default language and via the rollout agent); only re-run `msv production validate`/`msv slides validate` yourself if you need an independent re-check |
 | `publishing` | `youtube_video_publishing` | Only reached once `PIPELINE_AUTO_PUBLISH=true`, or the user has explicitly approved in conversation and the language was released via `approve-publish` (see "Human review gate" — never call `approve-publish` yourself just because a language reached `ready_for_review`); draft metadata, validate, `msv publishing upload`, then `set-stage --stage publishing --status completed --youtube-video-id ... --youtube-url ...` |
-| *(none — optional, untracked)* | `slideshow_video_production`'s "Optional alternate output" | Only if the user explicitly asks for an animated/motion-graphics version of an already-rendered language ("animated marketing video", "GSAP version", "motion graphics cut", ...). Dispatch `slideshow-production` to run `msv slides generate-animation` (once per deck) then `msv production render-marketing-animation` for that language. This is a side artifact (`marketing_animation.mp4`), never a pipeline stage — do not `set-stage` anything for it, do not gate it behind approval, and do not treat a request for it as a request to also touch `slideshow.mp4` or any language's core stages |
+| *(none — static fallback)* | `slideshow_video_production`'s "Static fallback" | Production is animation-first: every language's video is the animated render. Only if the user explicitly asks for a static slideshow, or `msv motion doctor` shows the motion engine unavailable, dispatch `slideshow-production` to render `slideshow.mp4` with `render-slideshow` instead. Both review gates (default language first, approval before publishing) apply either way |
 
 Because `analysis` covers every language in one deck-understanding pass,
 treat it as a single unit of work the first time a run needs it — but
@@ -206,9 +206,11 @@ run):
   resets just that language; `en-US`/`ja-JP` artifacts and state are
   untouched.
 - Changing only the deck's translated HTML (a typo fix, not a narration
-  change) does not require re-running TTS: `rerun_stage --stage rendering
-  --language zh-TW` re-applies translations and re-screenshots without
-  regenerating narration audio. Each `segments/<slide_id>.mp3` has a
+  change), or the animation templates/style, does not require re-running
+  TTS: `rerun_stage --stage rendering --language zh-TW` re-renders the
+  animated video against the existing narration. (A translated-text fix
+  also needs `translation` rerun first - `rerun_stage --stage translation`
+  resets tts too, but cached narration clips are reused unchanged.) Each `segments/<slide_id>.mp3` has a
   sidecar `<slide_id>.json` recording a hash of its narration text, voice,
   model and TTS instructions. A clip is reused when that matches and
   regenerated when it doesn't, so an edited narration can't silently play

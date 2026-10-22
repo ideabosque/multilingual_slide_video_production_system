@@ -292,7 +292,7 @@
     if (p.pop) {
       tl.from(el, {
         opacity: 0, scale: p.scale !== undefined ? p.scale : 0.3,
-        duration: ds.slideEnter * 1.6, ease: "elastic.out(1, 0.55)",
+        duration: ds.slideEnter * 1.4, ease: "back.out(2.5)",
       }, position);
     } else {
       tl.from(el, { opacity: 0, duration: ds.durationFast, ease: ds.ease }, position);

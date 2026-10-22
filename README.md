@@ -253,7 +253,7 @@ correctly — cheaper than finding out via a failed upload.
 
 ## The `msv` CLI
 
-Four command groups (`slides`, `production`, `publishing`, `pipeline`) —
+Five command groups (`slides`, `production`, `motion`, `publishing`, `pipeline`) —
 every command prints one JSON object and exits 0/1 for success/failure.
 `language-rollout` has no command group of its own: it's pure
 orchestration built entirely on `msv pipeline status`/`next-actions` plus
@@ -266,17 +266,28 @@ msv slides apply-translations --deck-dir <original_deck_dir> --localization <loc
 msv slides validate --slide-analysis ... --localization ... --language ... [--manifest ...] [--project ...]
 msv slides generate-animation --deck-dir <original_deck_dir> --out state/<run_id>/analysis/slides/animation [--slide-analysis ...] [--spec ...]
 
-msv production render-slideshow --run-id ... --project-id ... --language ... \
+# stage tts: narration + narration-driven timing + captions -> production.json (no video)
+msv production narrate --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> \
-    --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
     --localization state/<run_id>/analysis/localization_<language>.json \
-    --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
-msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
-msv production render-marketing-animation --production output/<run_id>/<language>/production.json \
+    --output-dir output/<run_id>/<language> [--audio-dir ...]
+# stage rendering: the animated video in one pass (engine/style from config/motion.yaml)
+msv production render-motion --production output/<run_id>/<language>/production.json \
     --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
     --animation-dir state/<run_id>/analysis/slides/animation \
-    --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
-    [--localization ...] [--output-name marketing_animation.mp4]
+    --localization state/<run_id>/analysis/localization_<language>.json \
+    [--engine hyperframes|playwright] [--output-name video.mp4]
+msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
+# static fallback (explicit request, or motion engine unavailable)
+msv production render-slideshow --run-id ... --project-id ... --language ... \
+    --source-deck <original_deck_dir> --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
+    --localization ... --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
+# legacy: Playwright-rendered side artifact next to a static slideshow
+msv production render-marketing-animation --production ... --translated-deck-dir ... \
+    --animation-dir ... --slides-dir ... [--localization ...]
+
+msv motion install          # npm ci in motion/ (pinned HyperFrames)
+msv motion doctor           # Node, HyperFrames, ffmpeg, Chromium, per-engine availability
 
 msv publishing validate --metadata ... --language ... [--video ...]
 msv publishing upload --run-id ... --project-id ... --language ... --video ... --metadata ... --output-dir ... [--existing-video-id ...]
@@ -293,30 +304,28 @@ job (see `.agents/skills/slide_deck_localization/SKILL.md`), not a
 deterministic script; the CLI only provides the extraction/rendering/
 validation tooling around that step.
 
-`generate-animation`/`render-marketing-animation` produce an optional,
-untracked side artifact (`marketing_animation.mp4`) — a GSAP-animated
-motion-graphics rebuild of an already-produced language, never a
-replacement for `slideshow.mp4` and never part of the tracked pipeline
-stages. Each slide gets one of eight shot templates — `title_reveal`,
-`feature_callout`, `stat_highlight` (real number count-up), `diagram_build`
-(staggered per-card reveal), `closing`, `quote_testimonial`,
-`comparison_versus`, `timeline_roadmap` — picked by a deterministic
-heuristic (position + keyword match on the slide's description), or by an
-optional `visual_role` field Agent 1 can assign per slide in
-`slide_analysis.json` (takes priority over the heuristic when present).
-Both are a fixed template library, not agent-generated code per deck —
-the templates themselves are declarative data in
-`config/animation_templates.yaml` (which role, which effect, what
-timing/order), played by a small generic engine + three reusable effect
-primitives (`reveal`/`accent_line`/`count_up`) in `animation_runtime.js`;
-adding or tuning a template is normally a YAML edit, not a JS change. See
-`docs/marketing-animation-pipeline-plan.md` §4.1 for why,
-and `.agents/skills/gsap_animation_authoring/SKILL.md` /
-`.agents/skills/motion_design_principles/SKILL.md` for the "how"/"which
-template" guidance that applies only when someone extends the library
-itself, not on a normal render. See
-`.agents/skills/slideshow_video_production/SKILL.md`'s "Optional alternate
-output" for the full command sequence.
+**Production is animation-first.** Each language's video is rendered in
+one pass: `narrate` (TTS and the narration-driven timing), then
+`render-motion`, which renders the translated deck as an animated video
+with HyperFrames (frame-exact) in the **playful** motion style - springy
+pop-ins, word-by-word headlines, count-ups, cards popping in across the
+narration, a slow camera push-in, and a quick fade before each cut. The
+review gates are unchanged: the default language is reviewed before the
+other languages render, and nothing is published without approval.
+
+Each slide gets one of eight shot templates (`title_reveal`,
+`feature_callout`, `stat_highlight`, `diagram_build`, `closing`,
+`quote_testimonial`, `comparison_versus`, `timeline_roadmap`), picked by
+`msv slides generate-animation` from an optional `visual_role` Agent 1
+assigns per slide in `slide_analysis.json`, otherwise a deterministic
+position + keyword heuristic. The templates are declarative data, one file
+per motion style (`config/animation_templates.yaml` = calm,
+`config/animation_templates_playful.yaml` = playful), played by a small
+generic engine in `slides/assets/animation_runtime.js` built on GSAP.
+Adding or tuning a template is a YAML edit. See
+`docs/motion-engines-and-hardening-plan.md` (Part D) for the design, and
+`.agents/skills/slideshow_video_production/SKILL.md` for the full command
+sequence.
 
 ## Architecture
 
@@ -343,12 +352,13 @@ output" for the full command sequence.
               ┌──────────────────┐
               │     AGENT 2      │  slideshow_video_production
               │ HTML TRANSLATE + │  default_language ONLY, first —
-              │ CHROMIUM RENDER +│  slideshow.mp4/narration.mp3/captions.srt/
-              │  OPENAI TTS +    │  production.json. Each slide's on-screen
-              │  FFMPEG ASSEMBLY │  duration is its own narration length plus
-              │                  │  a short pause - no pre-existing timeline
-              │                  │  to anchor against or overrun; captions
-              │                  │  auto-wrap; a title card leads the video.
+              │  OPENAI TTS +    │  narrate (tts), then one-pass animated
+              │ HYPERFRAMES      │  render (rendering): video.mp4/narration.mp3/
+              │ ANIMATED RENDER  │  captions.srt/production.json. Each slide's
+              │                  │  on-screen duration is its own narration
+              │                  │  length plus a short pause; playful motion
+              │                  │  plays against it; captions auto-wrap; an
+              │                  │  animated title card leads the video.
               └────────┬─────────┘
                        ▼
                  HUMAN REVIEW
@@ -434,8 +444,9 @@ src/multilingual_slide_video_agent/
                       # (GSAP animation bundle generation — see docs/marketing-animation-pipeline-plan.md)
     assets/            # animation_runtime.js (the actual GSAP timelines)
     vendor/            # vendored gsap.min.js (see its GSAP_LICENSE.txt)
-  production/         # TTS + slideshow assembly (captions/title-card styling)
-                      # + render_marketing_animation.py (optional GSAP-animated side artifact)
+  production/         # render_slideshow.py: narration (narrate_language) + static fallback
+                      # motion/: animated rendering - HyperFrames/Playwright engines,
+                      # shared caption+narration post-pass, validation
   publishing/         # YouTube upload (same shape as the video-source project)
   cli.py            # the `msv` command groups
 config/            # languages.yaml, terminology.yaml, video.yaml, design_system.yaml,

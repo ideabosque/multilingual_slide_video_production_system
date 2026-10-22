@@ -54,7 +54,7 @@ class MotionRenderContext:
     production_path: Path
     translated_deck_dir: Path
     animation_dir: Path
-    slides_dir: Path
+    slides_dir: Path | None                           # rendered slide PNGs; only the playwright engine's title card needs them
     segment_audio_dir: Path
     narration_audio: Path
     design_tokens: dict[str, Any]
@@ -94,7 +94,7 @@ def MotionRenderContext_from_production(
     production_path: str | Path,
     translated_deck_dir: str | Path,
     animation_dir: str | Path,
-    slides_dir: str | Path,
+    slides_dir: str | Path | None,
     localization_path: str | Path | None = None,
     roles_path: str | Path | None = None,
     viewport: str = "1920x1080",
@@ -187,7 +187,7 @@ def MotionRenderContext_from_production(
         production_path=production_file,
         translated_deck_dir=Path(translated_deck_dir).resolve(),
         animation_dir=animation_path,
-        slides_dir=Path(slides_dir).resolve(),
+        slides_dir=Path(slides_dir).resolve() if slides_dir else None,
         segment_audio_dir=seg_audio_dir,
         narration_audio=narration_audio,
         design_tokens=tokens,

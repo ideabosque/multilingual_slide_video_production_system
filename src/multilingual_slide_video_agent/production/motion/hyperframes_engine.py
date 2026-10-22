@@ -158,6 +158,7 @@ def _sanitize_css(css: str) -> str:
 
 def slide_to_template(
     slide_html: str, *, slide_id: str, template: str, width: int, height: int, duration: float = 0.0,
+    templates: dict | None = None, extra_css: str = "",
 ) -> tuple[str, int]:
     """Convert one translated slide (a full HTML document) into a
     HyperFrames sub-composition: a single bare `<template>` whose root
@@ -196,10 +197,13 @@ def slide_to_template(
         f'<template id="{slide_id}-template">\n'
         f'<div id="root" data-composition-id="{slide_id}" data-width="{width}" data-height="{height}">\n'
         + "\n".join(styles) + "\n"
-        f'<div data-motion-slide-body{wrapper_attrs} style="{wrapper_style}">{content}</div>\n'
+        + (f"<style>{extra_css}</style>\n" if extra_css else "")
+        + f'<div data-motion-slide-body{wrapper_attrs} style="{wrapper_style}">{content}</div>\n'
         "<script>\n"
         f'  window.__motionRunSlide(document.querySelector(\'[data-composition-id="{slide_id}"]\'),\n'
-        f"    {{ slideId: {json.dumps(slide_id)}, template: {json.dumps(template)}, duration: {duration:.6f} }});\n"
+        f"    {{ slideId: {json.dumps(slide_id)}, template: {json.dumps(template)}, duration: {duration:.6f}"
+        + (f", templates: {json.dumps(templates)}" if templates else "")
+        + " });\n"
         "</script>\n"
         "</div>\n"
         "</template>\n"
@@ -207,21 +211,14 @@ def slide_to_template(
     return html, dropped
 
 
-def _title_template(width: int, height: int) -> str:
-    """Static title card over slide 1's rendered image - not animated,
-    matching the other engines. An empty paused timeline keeps HyperFrames'
-    readiness check satisfied."""
-    return (
-        f'<template id="{TITLE_COMPOSITION_ID}-template">\n'
-        f'<div id="root" data-composition-id="{TITLE_COMPOSITION_ID}" data-width="{width}" data-height="{height}">\n'
-        '<img src="title.png" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">\n'
-        "<script>\n"
-        "  window.__timelines = window.__timelines || {};\n"
-        f'  window.__timelines["{TITLE_COMPOSITION_ID}"] = gsap.timeline({{ paused: true }});\n'
-        "</script>\n"
-        "</div>\n"
-        "</template>\n"
-    )
+# The title card's backdrop: the first slide's own markup, dimmed and
+# blurred, with a slow push-in, behind the burned-in title text (post.py's
+# Title style). It needs no rendered screenshots, and it moves like
+# everything else in an animation-first video.
+TITLE_BACKDROP_TEMPLATES = {
+    "title_backdrop": {"steps": [{"role": "slide", "effect": "drift", "params": {"scale": 1.1}}]},
+}
+TITLE_BACKDROP_CSS = "#root [data-motion-slide-body] { filter: blur(7px) brightness(0.55) saturate(1.1); }"
 
 
 def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
@@ -260,11 +257,13 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
     start_frame = 0
     for item, frames in zip(ctx.timing, frame_counts):
         if item.get("kind") == "title":
-            slide_one = ctx.slides_dir / "slide_001.png"
-            if not slide_one.exists():
-                raise MotionError(f"expected slide_001.png in --slides-dir for the title card: {slide_one}")
-            shutil.copy2(slide_one, project_dir / "title.png")
-            (compositions / f"{TITLE_COMPOSITION_ID}.html").write_text(_title_template(width, height), encoding="utf-8")
+            first_slide = ctx.slides[0].slide_id
+            html, _dropped = slide_to_template(
+                slide_files[first_slide].read_text(encoding="utf-8"), slide_id=TITLE_COMPOSITION_ID,
+                template="title_backdrop", width=width, height=height, duration=frames / ctx.fps,
+                templates=TITLE_BACKDROP_TEMPLATES, extra_css=TITLE_BACKDROP_CSS,
+            )
+            (compositions / f"{TITLE_COMPOSITION_ID}.html").write_text(html, encoding="utf-8")
             cid = TITLE_COMPOSITION_ID
         else:
             cid = item["slide_id"]

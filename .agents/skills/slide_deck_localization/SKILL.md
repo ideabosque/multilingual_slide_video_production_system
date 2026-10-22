@@ -130,12 +130,13 @@ state/<run_id>/analysis/
 `quote_testimonial` / `comparison_versus` / `timeline_roadmap` (the
 current set in `config/animation_templates.yaml`;
 `.agents/skills/motion_design_principles/SKILL.md`'s role table has the
-full description of each). It's consumed only by the separate, optional
-GSAP marketing-animation pipeline
-(`slideshow_video_production/SKILL.md`'s "Optional alternate output") to
-pick that slide's shot template — it has no effect on the core
-slideshow/translation/publishing pipeline, and omitting it is fine (a
-deterministic position+keyword heuristic covers slides without it). Assign
+full description of each). `msv slides generate-animation` uses it to
+pick that slide's shot template for the animated video every language is
+rendered as (`slideshow_video_production/SKILL.md`, "Animation bundle").
+It's a strong signal - a well-chosen role is the difference between a
+slide whose content pops in and one that barely moves - but omitting it is
+fine (a deterministic position+keyword heuristic covers slides without
+it). Assign
 it using the same judgment already going into `slide_description` — this
 is not extra research, just one more label on a slide you're already
 describing. Get it wrong and the animation pipeline just falls back to

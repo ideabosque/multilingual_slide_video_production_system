@@ -324,6 +324,10 @@ class PlaywrightEngine:
         for item in ctx.timing:
             duration = item["end_time"] - item["start_time"]
             if item.get("kind") == "title":
+                if ctx.slides_dir is None:
+                    raise MotionError(
+                        "the playwright engine needs --slides-dir (rendered slide PNGs) for its title card"
+                    )
                 slide_one = ctx.slides_dir / "slide_001.png"
                 if not slide_one.exists():
                     raise MotionError(

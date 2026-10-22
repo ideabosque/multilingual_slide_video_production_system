@@ -57,6 +57,7 @@ def render_marketing_animation(
             output_name=output_name,
             engine_name="playwright",
             viewport=viewport,
+            record_in_production=False,
         )
     except MarketingAnimationError:
         raise

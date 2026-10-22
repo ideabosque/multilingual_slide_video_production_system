@@ -186,6 +186,33 @@ def production() -> None:
     """Agent 2: voice & slideshow production tools."""
 
 
+@production.command("narrate")
+@click.option("--run-id", required=True)
+@click.option("--project-id", required=True)
+@click.option("--language", required=True)
+@click.option("--source-deck", required=True, type=click.Path(exists=True, file_okay=False), help="The original clean deck, for the source_deck_fingerprint idempotency check")
+@click.option("--localization", required=True, type=click.Path(exists=True), help="Agent 1's localization_<language>.json")
+@click.option("--output-dir", required=True, type=click.Path())
+@click.option("--audio-dir", type=click.Path(), help="Reuse pre-generated per-slide mp3s named <slide_id>.mp3")
+def production_narrate(
+    run_id: str, project_id: str, language: str, source_deck: str, localization: str,
+    output_dir: str, audio_dir: str | None,
+) -> None:
+    """The `tts` stage: narrate one language (TTS, narration-driven slide timing, captions) into production.json, with no video. render-motion renders the animated video next."""
+    from multilingual_slide_video_agent.production.render_slideshow import ProductionError, narrate_language
+
+    try:
+        envelope = narrate_language(
+            run_id=run_id, project_id=project_id, language=language, source_deck=source_deck,
+            localization_path=localization, output_dir=output_dir, audio_dir=audio_dir,
+        )
+    except ProductionError as e:
+        _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
+        return
+    envelope["ok"] = envelope.get("status") == "completed"
+    _echo_result(envelope)
+
+
 @production.command("render-slideshow")
 @click.option("--run-id", required=True)
 @click.option("--project-id", required=True)
@@ -264,18 +291,18 @@ def production_render_marketing_animation(
 @click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
 @click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
 @click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
-@click.option("--slides-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's rendered slide images, for the title card background (msv slides render-images output)")
+@click.option("--slides-dir", type=click.Path(exists=True, file_okay=False), help="Rendered slide images (msv slides render-images); only the playwright engine needs them, for its title card")
 @click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
 @click.option("--roles", "roles_path", type=click.Path(exists=True), help="roles_<language>.json from msv slides extract-roles (optional; the Remotion engine's content contract)")
 @click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
-@click.option("--output-name", help="Defaults to marketing_<engine>.mp4")
+@click.option("--output-name", help="Defaults to video.mp4")
 @click.option("--viewport", default="1920x1080", show_default=True)
 def production_render_motion(
-    engine: str | None, production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str,
+    engine: str | None, production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str | None,
     localization: str | None, roles_path: str | None, output_dir: str | None, output_name: str | None,
     viewport: str,
 ) -> None:
-    """Render an already-produced language as an animated MP4 with a chosen motion engine (plan B3 #5). Writes <output>.mp4 plus <output>.motion.json."""
+    """The `rendering` stage: render a narrated language (msv production narrate) as its animated video with a motion engine, and record it in production.json. Writes <output>.mp4 plus <output>.motion.json."""
     from multilingual_slide_video_agent.production.motion.errors import MotionError
     from multilingual_slide_video_agent.production.motion.render import render_motion
 

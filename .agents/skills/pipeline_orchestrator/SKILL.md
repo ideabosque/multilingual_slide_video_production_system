@@ -71,15 +71,13 @@ every `msv pipeline` subcommand you need. In short:
 Always finish by reporting `msv pipeline report`'s per-language status,
 never a single collapsed pass/fail for the whole run.
 
-**Animated output.** If the user asks for an "animated marketing video",
-"GSAP version" or "motion graphics cut" of an already-produced language,
-dispatch **slideshow-production** for that one language (see
-`.agents/skills/slideshow_video_production/SKILL.md`, "Optional alternate
-output").
-- It is an untracked side artifact, not a pipeline stage.
-- It requires that language's `translation`/`rendering`/`tts`/`validation`
-  stages to be `completed`. If they aren't, fail clearly and don't
-  dispatch.
-- Producing it never touches `msv pipeline set-stage`, never requires
-  `approve-production`, and implies nothing about `slideshow.mp4` or
-  publishing for that language.
+**Production is animation-first.** Each language's video is the animated
+render (playful motion, HyperFrames), produced in one pass by
+slideshow-production: narration (`tts`), then the animated render
+(`rendering`). There is no static-video-first step. Both review gates are
+unchanged: the default language is reviewed before the rollout, and
+nothing publishes without approval. If the user explicitly asks for a
+static slideshow instead, or `msv motion doctor` shows the motion engine
+unavailable, dispatch slideshow-production to use its static fallback
+(see `.agents/skills/slideshow_video_production/SKILL.md`, "Static
+fallback").
