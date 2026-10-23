@@ -186,9 +186,9 @@ The `msv` CLI, groups `msv slides` and `msv production`:
   deck (structure changed since Agent 1 analyzed it).
 - `msv production narrate --run-id ... --project-id ... --language ... --source-deck ... --localization ... --output-dir ...`
   — stage `tts`: narration, timing, captions, production.json (no video).
-- `msv production render-motion --production ... --translated-deck-dir ... --animation-dir ... --localization ... [--engine hyperframes]`
+- `msv production render-motion --production ... --translated-deck-dir ... --animation-dir ... --localization ... [--engine hyperframes|remotion] [--motion-design ...]`
   — stage `rendering`: the animated video, recorded in production.json.
-- `msv motion doctor` — checks Node, HyperFrames, ffmpeg and Chromium.
+- `msv motion doctor` — checks Node, both engines, ffmpeg and Chromium.
 - Static fallback: `msv slides render-images --deck-dir <translated_<lang>_dir> --out <rendered_<lang>_dir>`
   then `msv production render-slideshow --run-id ... --project-id ... --language ... --slides-dir ... --localization ... --output-dir ...`.
 - `msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]`
@@ -237,6 +237,16 @@ One language per run. Stages in order: `translation` → `tts` → `rendering`
    - It uses the engine and style in `config/motion.yaml`: HyperFrames,
      playful. The animation bundle comes from `msv slides
      generate-animation`, run once per deck (see below).
+   - `--engine remotion` renders the same animation with Remotion. Use it
+     only when the user asks for it. It keeps the deck's own fonts, where
+     HyperFrames substitutes its bundled ones. Remotion's free license
+     covers individuals and companies of up to 3 people.
+   - `--motion-design <motion_design.json>` plays the deck's motion design
+     (schema `motion-design/v1`) instead of each slide's template. Pass
+     it only when the user supplied one or asked for it; this skill does
+     not write designs. Render every language from the same file. An
+     invalid design fails before rendering, naming the slide and step:
+     report the errors and stop. Don't edit the design to make it pass.
    - Each slide animates for exactly its narration-driven duration; the
      title card is slide 1's own markup, blurred, behind the title.
    - Captions are burned in, the narration is muxed, and validation runs:

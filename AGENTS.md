@@ -28,7 +28,9 @@ src/multilingual_slide_video_agent/
                          animation bundle (assets/animation_runtime.js, vendor/gsap.min.js)
   production/            render_slideshow.py (narrate_language = stage tts; render_language =
                          static fallback), captions.py, motion/ (stage rendering: the
-                         animated video - engines, post-pass, validation)
+                         animated video - clips.py's shared clip plan, the hyperframes and
+                         remotion engines, post-pass, validation)
+  slides/motion_design.py  the motion-design/v1 language: validator, steps, transitions
   publishing/            YouTube upload / OAuth
 config/                  languages, terminology, video, motion, design system, animation templates
 .agents/skills/          all skills: 5 orchestrator skills + the procedure skills they follow
@@ -119,6 +121,18 @@ msv motion install                                  # only needed for the Node-b
   adds narration and captions. Keep audio and captions out of the engines.
 - Segment boundaries are whole frames rounded from the absolute timeline
   (`segment_frame_counts`). Don't encode segments by seconds.
+- Both engines (`hyperframes`, `remotion`) build from one clip plan,
+  `production/motion/clips.py`: boundaries, a motion design's steps, and
+  transition overlaps. Change timing there, not in one engine. Transitions
+  overlap neighbouring clips by equal halves, so no boundary moves.
+- Remotion renders with the chrome-headless-shell `msv motion install`
+  downloads, passed explicitly so a render never downloads anything. It is
+  never the default engine without the user's decision (license: free for
+  individuals and companies of up to 3 people).
+- HyperFrames substitutes system and generic fonts with its bundled ones
+  and queries Google Fonts for other families while rendering. A
+  cross-engine comparison must use embedded fonts, or it measures fonts,
+  not motion.
 - Validation (`motion/validate.py`) checks each slide's own first and last
   frames. Don't relax a threshold to make a render pass without
   understanding why it failed; look at the frames first.
@@ -130,6 +144,10 @@ msv motion install                                  # only needed for the Node-b
   randomness. See `.agents/skills/gsap_animation_authoring/SKILL.md`.
 - Templates are declarative data in `config/animation_templates.yaml`.
   Adding or tuning a template is a YAML change, not a JS change.
+- Motion designs (`motion-design/v1`) are played by the same step runner.
+  The templates are their presets and must keep rendering identically
+  whether named or expanded into steps (a test checks all of them). Design
+  steps fail loudly on a target that matches nothing; template steps skip.
 
 **Animation bundles**
 - A run's animation bundle (`generate-animation` output) supplies per-deck

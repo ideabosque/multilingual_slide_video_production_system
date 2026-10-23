@@ -1,11 +1,6 @@
-# HyperFrames engine project (placeholder)
+# HyperFrames engine
 
-Built in this plan's **Phase 2b**, after the Phase 2a spike answers the
-composition-format questions recorded in
-`docs/motion-engines-and-hardening-plan.md` (B4's spike list) against a
-pinned HyperFrames version.
-
-Nothing here yet - deliberately. The `playwright` engine
-(`src/multilingual_slide_video_agent/production/motion/playwright_engine.py`)
-is the working reference engine in Phase 1; `default_engine` stays
-`playwright` until Phase 4's parity sign-off (Open decision D1).
+Nothing lives here: `production/motion/hyperframes_engine.py` generates
+each render's HyperFrames project (`index.html` plus one sub-composition
+per slide) in a scratch directory and runs the pinned `hyperframes` CLI
+with telemetry disabled. See plan B4 for the composition rules.

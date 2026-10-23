@@ -276,15 +276,15 @@ msv production render-motion --production output/<run_id>/<language>/production.
     --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
     --animation-dir state/<run_id>/analysis/slides/animation \
     --localization state/<run_id>/analysis/localization_<language>.json \
-    [--engine hyperframes] [--output-name video.mp4]
+    [--engine hyperframes|remotion] [--motion-design motion_design.json] [--output-name video.mp4]
 msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
 # static fallback (explicit request, or motion engine unavailable)
 msv production render-slideshow --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
     --localization ... --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
 
-msv motion install          # npm ci in motion/ (pinned HyperFrames)
-msv motion doctor           # Node, HyperFrames, ffmpeg, Chromium, per-engine availability
+msv motion install          # npm ci in motion/ (pinned HyperFrames + Remotion), then Remotion's browser
+msv motion doctor           # Node, ffmpeg, Chromium, per-engine availability, Remotion license reminder
 
 msv publishing validate --metadata ... --language ... [--video ...]
 msv publishing upload --run-id ... --project-id ... --language ... --video ... --metadata ... --output-dir ... [--existing-video-id ...]
@@ -323,6 +323,27 @@ Adding or tuning a template is a YAML edit. See
 `docs/motion-engines-and-hardening-plan.md` (Part D) for the design, and
 `.agents/skills/slideshow_video_production/SKILL.md` for the full command
 sequence.
+
+**Two engines, one animation.** `--engine hyperframes` (the default) and
+`--engine remotion` both render the translated deck itself and seek the same
+per-slide GSAP timelines frame by frame, so they cut, animate and
+transition every slide on the same frames. They differ in fonts:
+HyperFrames swaps system fonts (Georgia, Arial, generic `sans-serif`) for
+its own bundled ones and looks up other font names on Google Fonts while
+rendering; Remotion renders the deck's fonts as the browser does. Remotion
+is free for individuals and companies of up to 3 people; larger companies
+need a Remotion company license (`msv motion doctor` prints a reminder).
+
+**Per-deck motion designs.** Instead of one template per slide, a deck can
+have a `motion_design.json` (schema `motion-design/v1`): which elements
+move, in what order and at which point in the narration, with effects such
+as word-by-word or line-by-line text, SVG line drawing, highlights,
+arrows between boxes, camera moves, and crossfade/push/wipe transitions
+between slides. The eight templates are its presets. Pass it with
+`render-motion --motion-design`; it is validated before anything renders.
+`docs/examples/motion_design.food-manufacturing.json` is a worked example.
+Claude writing these designs itself, with an approval gate, is the plan's
+Phase 6.
 
 ## Architecture
 

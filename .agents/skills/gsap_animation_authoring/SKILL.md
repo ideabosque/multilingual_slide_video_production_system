@@ -33,12 +33,24 @@ skill exists to keep that code disciplined.
    not JS — see "Template config schema" below. Editing that file is the
    whole job; no code changes.
 2. **Adding a new *effect primitive*** — rare. Only needed when a template
-   needs a kind of motion the existing three effects (`reveal`,
-   `accent_line`, `count_up`) can't express as parameters. This means a
-   real JS change in `slides/assets/animation_runtime.js`'s `EFFECTS`
-   registry, plus a matching Python-side name in
-   `animation_templates.py`'s `_KNOWN_EFFECTS`. The rules below (rule 1
-   especially) apply to that JS, not to the YAML.
+   or a motion design needs a kind of motion the existing effects can't
+   express as parameters. This means a real JS change in
+   `slides/assets/animation_runtime.js`'s `EFFECTS` registry, plus the
+   matching Python-side name: `animation_templates.py`'s `_KNOWN_EFFECTS`
+   for templates, and `slides/motion_design.py`'s `EFFECT_PARAMS` (with the
+   parameters a design may give it) for motion designs. Add a case to
+   `tests/test_motion_design_runtime.py`'s seek-safety test. The rules
+   below (rule 1 especially) apply to that JS, not to the YAML.
+
+**Motion designs** (`motion-design/v1`, plan C3) are per-deck JSON that the
+same step runner plays; `slides/motion_design.py` validates them and turns
+them into runtime steps. What differs from templates: a design step names a
+`target` (`node`, `group`, `selector` or `role`) and fails loudly when it
+matches nothing, since the design was written for this deck; a step's `id`
+becomes a timeline label, so `"hdr+=0.2"` really means 0.2s after `hdr`
+starts; durations may be seconds. Designs have their own effects on top of
+the templates': `text_split` (word, char, line), `draw_svg`, `highlight`,
+`emphasis`, `path_connect` and `camera`.
 
 ## Template config schema
 

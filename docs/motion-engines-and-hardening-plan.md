@@ -30,7 +30,82 @@ on a missing clip, plus a new audio check in validation).
   exact-frame assembly moved to `production/motion/assembly.py`. HyperFrames
   is the only animated engine; the static slideshow remains the fallback.
 
-Phases 3–7 and the rest of 8 are approved, not started. Open
+**Phases 3 and 4 built (2026-10-22, done together at the user's request;
+branch `feature/remotion-and-motion-language`).**
+
+- **Phase 3, Remotion (deck-faithful mode, B5):** `motion/remotion/` (one
+  `Slideshow` composition; each clip is the translated page in an iframe
+  whose paused timeline is seeked to `frame / fps`) and
+  `remotion_engine.py`. Pinned remotion 4.0.534 and react 19.3.0.
+  `msv motion install` also downloads Remotion's chrome-headless-shell, and
+  renders pass it explicitly, so they download nothing.
+  - Reference deck, en-US: 14 slides, 9:57 rendered in 6:06, validation
+    passing on every slide. For comparison, HyperFrames took 13:28 for the
+    zh-TW render of the same deck.
+  - Frame parity with HyperFrames: under 0.2% of pixels on the fixture
+    deck, mid-transition included, **once both use the same fonts**. On
+    the real deck they differ by 2-13% of pixels because of fonts (next
+    item).
+- **Finding: HyperFrames substitutes fonts.** On every render, HyperFrames
+  0.8.140 rewrites system and generic font families to its bundled ones
+  (Georgia becomes EB Garamond, Arial becomes Inter, `sans-serif` becomes
+  `Inter, sans-serif`). It also looks up any other family on Google Fonts,
+  sending the page's unique characters as a subsetting `text=` parameter.
+  There is no switch for either. So HyperFrames' videos don't match the
+  deck where it uses system fonts: the reference deck's Georgia headlines
+  render lighter and smaller. Remotion renders the deck's fonts as
+  Chromium does. **This bears on D1 (default engine); raised with the
+  user.**
+- **Phase 4, the motion language and interpreter (C3):**
+  `slides/motion_design.py` (validator, resolution into runtime steps,
+  transition planning, generated JSON Schema) and the runtime interpreter.
+  - New seek-safe effects: `text_split` (word, char, line), `draw_svg`,
+    `highlight` (sweep or colour, brand tokens only), `emphasis` (capped
+    pulse), `path_connect` (arrow between two targets), `camera` (push-in
+    or pan, scale ≤ 1.08) and a `reveal` blur.
+  - Targets: `node`, `group`, `selector` and `role`. Both engines tag text
+    elements with their extract-text node ids (`data-motion-node`).
+  - Design step ids become timeline labels.
+  - Transitions: crossfade, push and wipe.
+  - `render-motion --motion-design`. Both engines build from one clip plan
+    (`production/motion/clips.py`).
+  - The 8 templates are the presets. A test checks every preset, in both
+    styles, renders identically by name or as explicit steps.
+  - Every new effect passes a seek-order test.
+  - Exit sample: a hand-written design renders in both engines (fixture
+    test). `docs/examples/motion_design.food-manufacturing.json` is a
+    worked example for the reference deck.
+  - Tests: 139 → 201.
+- **Deviations from C3/B5 as written:**
+  - Transitions don't use `@remotion/transitions` or
+    `@hyperframes/shader-transitions`. Both engines play the same three
+    DOM transitions from one plan. The incoming clip starts d/2 early and
+    the outgoing one runs d/2 late, so every boundary and the total length
+    stay put. A `TransitionSeries` would shorten the timeline instead.
+  - SplitText and DrawSVG are not vendored. `text_split` and `draw_svg` are
+    small seek-safe implementations: word spans grouped by laid-out line,
+    and `stroke-dashoffset`.
+  - `overlay` (React overlays) is not in v1. It needs the React component
+    work deferred with D4.
+  - Template `position` strings keep GSAP's own meaning, where an unknown
+    label lands at the timeline's end, so presets render as before. Only
+    design steps get labels.
+  - The design's `deck_fingerprint` is required but not yet compared with
+    the deck. That check is C5 #2, in Phase 5 with the other guardrails.
+  - Remotion doesn't use `roles_<lang>.json`; the deck-faithful mode needs
+    none. B5's template-name parity test and B8's
+    `remotion_template_authoring` skill both maintain the D4 React
+    templates, so they are deferred with them.
+- **Fixed on the way:**
+  - In a standalone page (Remotion's iframes) the camera zoomed around
+    `<body>`'s centre, which is only as tall as its content, instead of
+    the frame's.
+  - A slide's script error now names the slide in both engines.
+  - A missing bundle file, or a deck with no slides, now fails naming it.
+  - Retiring the Playwright engine had removed `msv slides render`'s
+    `json` import (fixed on the PR branch too).
+
+Phases 5–7 and the rest of 8 are approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 
