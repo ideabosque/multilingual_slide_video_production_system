@@ -191,10 +191,10 @@ branch `feature/remotion-and-motion-language`).**
   - round 1 passed validation; its filmstrip showed an empty panel on
     slides 1 and 7;
   - round 2 fixed that and passed;
-  - the design is registered (draft) and waits for human review.
+  - the design is registered, and the user approved it on first review
+    (2026-10-23, `msv pipeline approve-motion`).
 
-  "Approved on first or second review" and "the rollout renders all
-  languages from it" still need the user. Rolling out is on hold at the
+  "The rollout renders all languages from it" is still open. Rolling out is on hold at the
   user's request: no further translation or publishing after testing.
 - **Findings:**
   - `run-20260818-001`'s analysis predates the extractor fix for the stray
