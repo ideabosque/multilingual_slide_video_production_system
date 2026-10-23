@@ -287,6 +287,7 @@ msv production render-slideshow --run-id ... --project-id ... --language ... \
 
 msv motion preview --production ... --translated-deck-dir ... --animation-dir ... [--motion-design ...]   # small fast render + filmstrip
 msv motion filmstrip --video ... --motion-json ... --out ...
+msv motion compare --a <video> --b <video> --out sheet.png   # two renders side by side; durations must match per slide
 msv motion schema           # the motion-design/v1 JSON Schema
 msv pipeline register-motion / approve-motion / reject-motion --notes ...   # the motion design approval gate
 msv motion install          # npm ci in motion/ (pinned HyperFrames + Remotion), then Remotion's browser

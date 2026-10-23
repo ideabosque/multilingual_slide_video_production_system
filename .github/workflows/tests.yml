@@ -1,0 +1,51 @@
+# Test matrix (motion-engines-and-hardening-plan B7, Phase 7).
+#
+# - python-only: no ffmpeg, browser or motion toolchain. Tests that need one
+#   skip themselves (tests/conftest.py markers and each engine's
+#   check_available), so this keeps the Python-only path green.
+# - full: ffmpeg, Playwright's Chromium, Node 22 and `msv motion install`
+#   (both engines and their browsers), so the HyperFrames and Remotion
+#   end-to-end renders run for real.
+#
+# No secrets are used: TTS is stubbed in tests, and nothing publishes.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  full:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: System packages (ffmpeg, CJK fonts for caption tests)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-dejavu-core
+      - run: pip install -e ".[dev]"
+      - name: Playwright Chromium (and the libraries every headless Chrome here needs)
+        run: python -m playwright install --with-deps chromium
+      - name: Motion toolchain (npm ci, then both engines' browsers)
+        run: msv motion install
+      - run: msv motion doctor
+      - run: python -m pytest -q -ra

@@ -46,9 +46,12 @@ def write_production(
     title_seconds: float = TITLE_SECONDS,
     slide_seconds: tuple[float, ...] = SLIDE_SECONDS,
     language: str = "en-US",
+    with_audio: bool = True,
 ) -> Path:
     """production.json with narration-segment audio present for every slide;
-    timing mirrors render_slideshow.py's layout (title card first)."""
+    timing mirrors render_slideshow.py's layout (title card first).
+    `with_audio=False` skips generating the clips (which needs ffmpeg) for
+    tests that only read the record."""
     timing = [{"kind": "title", "start_time": 0.0, "end_time": float(title_seconds)}]
     cursor = title_seconds
     for slide_id, seconds in zip(slide_ids, slide_seconds, strict=True):
@@ -59,8 +62,10 @@ def write_production(
         cursor += seconds
     narration_dir = out_dir / "narration"
     segments_dir = narration_dir / "segments"
+    segments_dir.mkdir(parents=True, exist_ok=True)
     for slide_id in slide_ids:
-        make_segment_audio(segments_dir, slide_id)
+        if with_audio:
+            make_segment_audio(segments_dir, slide_id)
     production = {
         "run_id": "run-motion-test", "project_id": "proj-motion-test",
         "language": language, "title": title,

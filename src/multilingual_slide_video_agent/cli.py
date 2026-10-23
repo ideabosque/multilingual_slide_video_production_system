@@ -403,11 +403,24 @@ def motion_install() -> None:
             ]})
             return
         browser = json.loads(result.stdout.strip().splitlines()[-1]).get("status", {}).get("path")
+    # HyperFrames' Chrome too (found if present, else downloaded once), with
+    # its telemetry off as on every HyperFrames call.
+    from multilingual_slide_video_agent.production.motion import hyperframes_engine as hf
+
+    hf_browser = None
+    if hf._cli_script().exists():
+        try:
+            hf._run_cli(["browser", "ensure"], timeout=900, what="browser ensure")
+            hf_browser = hf._run_cli(["browser", "path"], timeout=60, what="browser path").stdout.strip().splitlines()[-1:]
+        except Exception as e:  # noqa: BLE001 - reported as a JSON failure
+            _echo_result({"ok": False, "errors": [f"HyperFrames' browser setup failed: {e}"]})
+            return
     _echo_result({
         "ok": True, "installed": True,
         "from_lockfile": (motion_dir / "package-lock.json").exists(),
         "motion_dir": str(motion_dir),
         "remotion_browser": browser,
+        "hyperframes_browser": hf_browser[0] if hf_browser else None,
     })
 
 
@@ -479,6 +492,28 @@ def motion_filmstrip(video: str, motion_json: str, out: str, slide_ids: str | No
         _echo_result({"ok": False, "errors": [str(e)]})
         return
     _echo_result({"ok": True, "filmstrip": str(path)})
+
+
+@motion.command("compare")
+@click.option("--a", "a_video", required=True, type=click.Path(exists=True), help="First render (its <stem>.motion.json must sit next to it)")
+@click.option("--b", "b_video", required=True, type=click.Path(exists=True), help="Second render of the same language")
+@click.option("--out", required=True, type=click.Path(), help="Contact sheet PNG")
+@click.option("--labels", help="Column names, comma-separated (default: each render's engine)")
+def motion_compare(a_video: str, b_video: str, out: str, labels: str | None) -> None:
+    "Compare two renders of one language: a contact sheet (A, B, difference at each slide's midpoint) and per-slide duration deltas, which must be 0 ± 1 frame (plan B6 #5)."
+    from multilingual_slide_video_agent.production.motion.compare import compare_renders
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+
+    names = tuple(labels.split(",", 1)) if labels else None
+    try:
+        result = compare_renders(a_video, b_video, out, labels=names)
+    except (MotionError, OSError, ValueError) as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    if not result["ok"]:
+        result["errors"] = [f"{r['slide_id']}: durations differ by {r['duration_delta_frames']:+g} frames"
+                            for r in result["slides"] if not r["timing_ok"]]
+    _echo_result(result)
 
 
 @motion.command("schema")

@@ -209,7 +209,48 @@ branch `feature/remotion-and-motion-language`).**
   (`--slides`); at 80s a deck, a partial render wasn't worth the
   complexity yet.
 
-Phase 7 and the rest of 8 are approved, not started. Open
+**Phase 7 built (2026-10-23): QA, docs, decision.**
+
+- `msv motion compare --a … --b … --out sheet.png`
+  (`production/motion/compare.py`, B6 #5). Each contact-sheet row shows
+  A, B and their difference at the slide's midpoint, plus the per-slide
+  duration delta, which must be 0 ± 1 frame. The command fails naming
+  any slide outside that.
+- Cross-engine review of the reference deck (en-US, HyperFrames
+  `video.mp4` vs Remotion `video_remotion.mp4`):
+  - every slide's duration delta is 0 frames;
+  - the difference column is dark except text outlines, at 3-13% of
+    pixels per slide.
+
+  So layout, positions and animation state match, and the remaining
+  difference is HyperFrames' font substitution, as found in Phase 3.
+- D1 decided by the user (2026-10-22): `default_engine: remotion`.
+- `msv motion install` also runs `hyperframes browser ensure`, so neither
+  engine downloads a browser during a render. It reports both browsers'
+  paths.
+- CI matrix, `.github/workflows/tests.yml`:
+  - `python-only` has no ffmpeg, browser or Node toolchain; everything
+    that needs one must skip;
+  - `full` runs ffmpeg, Node 22, Playwright's Chromium and
+    `msv motion install`, so both engines render.
+
+  The python-only case was simulated locally (tools removed from PATH,
+  an empty Playwright browser dir): 170 passed, 60 skipped. That
+  simulation found the context tests building their fixture with ffmpeg;
+  fixed with `write_production(with_audio=False)`.
+- Docs (B8, C7):
+  - the production skill's troubleshooting starts with
+    `msv motion doctor` and covers `motion compare`;
+  - `marketing-animation-pipeline-plan.md` is marked superseded;
+  - README and AGENTS.md cover compare and CI.
+- **Open:**
+  - the user's sign-off;
+  - the CI run itself, which needs a push to GitHub (no `gh` here to
+    watch it);
+  - Phase 6's rollout criterion, held at the user's request;
+  - Phase 8 (optional).
+
+Phase 8 (optional) is approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 

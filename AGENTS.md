@@ -85,6 +85,10 @@ msv motion install                                  # only needed for the Node-b
   tool are marked `requires_ffmpeg`, `requires_browser` or `requires_node`,
   and `tests/conftest.py` skips them when the tool is absent. A full run with
   everything installed takes about a minute.
+- CI (`.github/workflows/tests.yml`) runs the suite twice: with no ffmpeg,
+  browser or Node toolchain (everything that needs one must skip, never
+  fail), and with all of them plus `msv motion install`. Fixtures that
+  don't need a tool must not call it (see `write_production(with_audio=False)`).
 - Directories resolve from `MSV_ROOT_DIR` (default: current directory). Tests
   isolate themselves with `MSV_STATE_DIR` and `MSV_LOGS_DIR`; new tests that
   touch state or logs must do the same.
