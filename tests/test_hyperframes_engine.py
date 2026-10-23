@@ -43,10 +43,12 @@ def test_slide_to_template_shape():
     assert ".stat-num { font-size: 200px; }" in html and 'href="styles.css"' in html
     # body classes/style land on a wrapper, not the composition root
     assert re.search(r'<div data-motion-slide-body class="dark hero" style="position:absolute;inset:0;color: #eee">', html)
-    assert '8<span class="unit">%</span>' in html
+    # text elements carry their extract-text node ids, for motion design targets
+    assert '<p class="eyebrow" data-motion-node="slide_005#n0">Board-level risk signal</p>' in html
+    assert '<div class="stat-num" data-motion-node="slide_005#n1">8<span class="unit" data-motion-node="slide_005#n2">%</span>' in html
     # the slide's timeline is built inside its own root
     assert 'window.__motionRunSlide(document.querySelector(\'[data-composition-id="slide_005"]\')' in html
-    assert '"template": "stat_highlight"' in html or 'template: "stat_highlight"' in html
+    assert '"template": "stat_highlight"' in html
 
 
 def _ctx(tmp_path, *, slide_seconds=(1.517, 2.483), viewport="1280x720"):

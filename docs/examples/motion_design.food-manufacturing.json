@@ -1,0 +1,86 @@
+{
+  "schema": "motion-design/v1",
+  "deck_fingerprint": "2027866aceb4b737",
+  "style": {
+    "energy": "lively",
+    "notes": "Hand-written sample for the food-manufacturing procurement deck (run-20260911-002), the plan's Phase 4 exit sample. The motion follows the argument: the cover names three control pillars as the narrator does; slide 4 draws the line from manual truth to system-enforced truth; the stat slides land their number, then pulse it once; the close builds the ask word by word. Slides without an entry play their preset. Slides hand off with a crossfade, except where a push or wipe marks a turn in the argument."
+  },
+  "transitions": {"default": {"type": "crossfade", "duration": "slide_enter"}},
+  "slides": [
+    {
+      "slide_id": "slide_001",
+      "preset": "title_reveal",
+      "intent": "Kinetic headline, then the three control pillars arrive one by one while the narrator introduces them.",
+      "steps": [
+        {"id": "kicker", "target": {"node": "slide_001#n0"}, "effect": "reveal", "from": {"y": 12}, "duration": "slide_enter"},
+        {"id": "hdr", "target": {"node": "slide_001#n1"}, "effect": "text_split", "by": "word", "from": {"y": 40, "opacity": 0}, "stagger": 0.07, "ease": "back.out(1.6)", "position": "kicker+=0.15"},
+        {"id": "lead", "target": {"node": "slide_001#n2"}, "effect": "reveal", "from": {"y": 16}, "position": "hdr+=0.7"},
+        {"id": "chips", "target": {"group": ".chip"}, "effect": "pop", "stagger": 0.1, "position": "lead+=0.3"},
+        {"id": "rows", "target": {"group": ".cover-panel__row"}, "effect": "beats", "between": [0.2, 0.55], "from": {"x": 60, "scale": 0.9}}
+      ],
+      "camera": {"effect": "push_in", "scale": 1.03},
+      "transition_out": {"type": "push", "direction": "left", "duration": "slide_enter"}
+    },
+    {
+      "slide_id": "slide_004",
+      "preset": "stat_highlight",
+      "intent": "The turn of the argument: state the failure, show both patterns, then draw the line from manual truth to system-enforced truth and mark the target.",
+      "steps": [
+        {"id": "eyebrow", "target": {"node": "slide_004#n0"}, "effect": "reveal", "from": {"y": 10}},
+        {"id": "hdr", "target": {"node": "slide_004#n1"}, "effect": "text_split", "by": "line", "from": {"y": 30}, "stagger": 0.18, "position": "eyebrow+=0.1"},
+        {"id": "lead", "target": {"node": "slide_004#n2"}, "effect": "reveal", "from": {"y": 14}, "position": "hdr+=0.6"},
+        {"id": "cards", "target": {"group": ".comparison > .compare-col"}, "effect": "reveal", "from": {"x": -50}, "stagger": 0.35, "beat_at": 0.12, "duration": "slide_enter"},
+        {"id": "arrow", "target": {"node": "slide_004#n4"}, "effect": "path_connect", "to": {"node": "slide_004#n7"}, "beat_at": 0.45},
+        {"id": "target", "target": {"node": "slide_004#n7"}, "effect": "highlight", "beat_at": 0.5, "duration": 0.6},
+        {"id": "footer", "target": {"group": ".footer > span"}, "effect": "reveal", "from": {"y": 10}, "stagger": 0.2, "beat_at": 0.7}
+      ],
+      "transition_out": {"type": "wipe", "direction": "left", "duration": "slide_enter"}
+    },
+    {
+      "slide_id": "slide_005",
+      "preset": "stat_highlight",
+      "intent": "Land the 8% risk number, pulse it once as the narrator stresses it, then name the certifications at stake one by one.",
+      "steps": [
+        {"id": "eyebrow", "target": {"node": "slide_005#n0"}, "effect": "reveal", "from": {"y": 10}},
+        {"id": "stat", "target": {"role": "stat"}, "effect": "count_up", "pop": true, "position": "eyebrow+=0.2"},
+        {"id": "caption", "target": {"node": "slide_005#n3"}, "effect": "reveal", "from": {"y": 14}, "position": "stat+=0.8"},
+        {"id": "context", "target": {"node": "slide_005#n4"}, "effect": "reveal", "from": {"y": 14}, "beat_at": 0.25},
+        {"id": "pulse", "target": {"role": "stat"}, "effect": "emphasis", "scale": 1.08, "beat_at": 0.3},
+        {"id": "chips", "target": {"group": ".chip-row > .chip"}, "effect": "beats", "between": [0.35, 0.7]}
+      ],
+      "camera": {"effect": "push_in", "scale": 1.04}
+    },
+    {
+      "slide_id": "slide_007",
+      "preset": "stat_highlight",
+      "intent": "The optimistic economic case: the preset's count-up, with a slow pan instead of a push-in.",
+      "camera": {"effect": "pan", "scale": 1.05, "x": -40}
+    },
+    {
+      "slide_id": "slide_010",
+      "preset": "closing",
+      "intent": "Two responses to a shortage side by side: the substitute graph, then the parallel RFQs, connected; then the human gate.",
+      "steps": [
+        {"id": "eyebrow", "target": {"node": "slide_010#n0"}, "effect": "reveal", "from": {"y": 10}},
+        {"id": "cols", "target": {"group": ".comparison > .compare-col"}, "effect": "pop", "stagger": 0.4, "position": "eyebrow+=0.2"},
+        {"id": "arrow", "target": {"node": "slide_010#n2"}, "effect": "path_connect", "to": {"node": "slide_010#n5"}, "beat_at": 0.4},
+        {"id": "gate", "target": {"group": ".footer > span"}, "effect": "reveal", "from": {"y": 10}, "stagger": 0.2, "beat_at": 0.6},
+        {"id": "mark", "target": {"node": "slide_010#n8"}, "effect": "highlight", "mode": "color", "color": "accent-signal", "beat_at": 0.65}
+      ],
+      "transition_out": {"type": "push", "direction": "up", "duration": "slide_enter"}
+    },
+    {
+      "slide_id": "slide_014",
+      "preset": "closing",
+      "intent": "The ask, built word by word, then its three conditions, then one pulse on the decision.",
+      "steps": [
+        {"id": "eyebrow", "target": {"node": "slide_014#n0"}, "effect": "reveal", "from": {"y": 10}},
+        {"id": "ask", "target": {"node": "slide_014#n1"}, "effect": "text_split", "by": "word", "from": {"y": 40}, "stagger": 0.1, "ease": "back.out(1.6)", "position": "eyebrow+=0.2"},
+        {"id": "line", "target": {"node": "slide_014#n2"}, "effect": "reveal", "from": {"y": 14}, "position": "ask+=0.8"},
+        {"id": "chips", "target": {"group": ".chip-row > .chip"}, "effect": "beats", "between": [0.3, 0.6]},
+        {"id": "pulse", "target": {"node": "slide_014#n1"}, "effect": "emphasis", "scale": 1.05, "beat_at": 0.75}
+      ],
+      "camera": {"effect": "push_in", "scale": 1.04}
+    }
+  ]
+}

@@ -122,36 +122,63 @@ def _inject_animation_assets(
                 f"no animation template assigned for slide '{slide_id}' - "
                 f"the animation bundle at {animation_dir} doesn't match this deck's slides"
             )
-        html = slide_path.read_text(encoding="utf-8")
-        html = re.sub(
-            re.escape(_ANIMATION_MARKER_START) + r".*?" + re.escape(_ANIMATION_MARKER_END) + r"\n?",
-            "", html, flags=re.DOTALL,
+        inject_animation_page(
+            slide_path, template=template, slide_id=slide_id, motion_mode=motion_mode,
+            duration=(durations_by_slide_id or {}).get(slide_id),
         )
-        # The inline `<style>` is render-blocking: the page stays invisible
-        # until animation_runtime.js's run() reveals it, right after GSAP
-        # applies the timeline's "from" starting values, so the first paint
-        # never shows the slide at its final state.
-        override = (
-            f"{_ANIMATION_MARKER_START}\n"
-            "<style>html{visibility:hidden}</style>\n"
-            '<link rel="stylesheet" href="design_tokens.css">\n'
-            f'<script>window.__ANIMATION_TEMPLATE__="{template}";'
-            + (
-                f'window.__MOTION_MODE__="seek";window.__ANIMATION_SLIDE_ID__="{slide_id}";'
-                if motion_mode == "seek" else ""
-            )
-            # The slide's real on-screen length, which beat positions and
-            # exits are laid out against.
-            + (f"window.__ANIMATION_SLIDE_DURATION__={float(durations_by_slide_id[slide_id]):.6f};"
-               if durations_by_slide_id and slide_id in durations_by_slide_id else "")
-            + '</script>\n'
-            '<script src="templates_config.js"></script>\n'
-            '<script src="gsap.min.js"></script>\n'
-            '<script src="animation_runtime.js" defer></script>\n'
-            f"{_ANIMATION_MARKER_END}\n"
+
+
+def inject_animation_page(
+    page_path: Path, *, template: str, slide_id: str, motion_mode: str = "live",
+    duration: float | None = None, extra_css: str = "", dest: Path | None = None,
+    steps: list | None = None, lead: float = 0.0,
+) -> None:
+    """Inject the animation runtime's <script>/<link> tags into one slide
+    page (written to `dest`, default in place), replacing any earlier
+    injection by marker. The page's directory must hold the animation
+    assets (see _inject_animation_assets).
+
+    `steps` and `lead` are a motion design's steps for this slide and its
+    transition lead in seconds (production/motion/clips.py).
+
+    In "seek" mode the page also records its own script errors in
+    `window.__motionErrors`, so a seeking renderer that hosts the page in
+    an iframe (the Remotion engine) can fail naming the slide."""
+    html = page_path.read_text(encoding="utf-8")
+    html = re.sub(
+        re.escape(_ANIMATION_MARKER_START) + r".*?" + re.escape(_ANIMATION_MARKER_END) + r"\n?",
+        "", html, flags=re.DOTALL,
+    )
+    # The inline `<style>` is render-blocking: the page stays invisible
+    # until animation_runtime.js's run() reveals it, right after GSAP
+    # applies the timeline's "from" starting values, so the first paint
+    # never shows the slide at its final state.
+    override = (
+        f"{_ANIMATION_MARKER_START}\n"
+        "<style>html{visibility:hidden}</style>\n"
+        + (f"<style>{extra_css}</style>\n" if extra_css else "")
+        + '<link rel="stylesheet" href="design_tokens.css">\n'
+        + f'<script>window.__ANIMATION_TEMPLATE__={json.dumps(template)};'
+        + (
+            f'window.__MOTION_MODE__="seek";window.__ANIMATION_SLIDE_ID__={json.dumps(slide_id)};'
+            "window.__motionErrors=[];window.addEventListener('error',function(e){"
+            "window.__motionErrors.push(String(e.message||e));});"
+            if motion_mode == "seek" else ""
         )
-        html = html.replace("</head>", override + "</head>", 1)
-        slide_path.write_text(html, encoding="utf-8")
+        # The slide's real on-screen length, which beat positions and
+        # exits are laid out against.
+        + (f"window.__ANIMATION_SLIDE_DURATION__={float(duration):.6f};" if duration is not None else "")
+        + ("window.__ANIMATION_STEPS__=" + json.dumps(steps, ensure_ascii=False).replace("</", "<\\/") + ";"
+           if steps is not None else "")
+        + (f"window.__ANIMATION_LEAD__={lead:.6f};" if lead else "")
+        + '</script>\n'
+        '<script src="templates_config.js"></script>\n'
+        '<script src="gsap.min.js"></script>\n'
+        '<script src="animation_runtime.js" defer></script>\n'
+        f"{_ANIMATION_MARKER_END}\n"
+    )
+    html = html.replace("</head>", override + "</head>", 1)
+    (dest or page_path).write_text(html, encoding="utf-8")
 
 
 def chromium_available() -> list[str]:

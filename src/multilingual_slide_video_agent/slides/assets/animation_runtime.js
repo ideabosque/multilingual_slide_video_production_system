@@ -225,9 +225,10 @@
   // character for Chinese/Japanese, which don't separate words with
   // spaces), keeping whitespace and child elements, so `words` can animate
   // them individually. Done once per element, at build time - the same
-  // DOM every time the timeline is seeked.
+  // DOM every time the timeline is seeked. `byChar` splits every script per
+  // character. An element is split once; a later step reuses its spans.
   var CJK_RE = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/;
-  function splitWords(el) {
+  function splitWords(el, byChar) {
     if (el.__motionWords) return el.__motionWords;
     var spans = [];
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -237,7 +238,7 @@
     }
     textNodes.forEach(function (node) {
       var text = node.nodeValue;
-      var parts = CJK_RE.test(text) ? Array.from(text) : text.split(/(\s+)/);
+      var parts = byChar || CJK_RE.test(text) ? Array.from(text) : text.split(/(\s+)/);
       var frag = document.createDocumentFragment();
       parts.forEach(function (part) {
         if (!part) return;
@@ -324,8 +325,11 @@
     slide_exit: "slideExit",
   };
 
+  // A duration is a design-system token name or, in a motion design, a
+  // number of seconds (motion_design.py bounds it).
   function resolveDurationToken(ds, token, fallback) {
     if (token == null) return fallback;
+    if (typeof token === "number") return token;
     var key = DURATION_TOKENS[token];
     return key ? ds[key] : fallback;
   }
@@ -361,6 +365,92 @@
     return Array.isArray(els[keys[0]]) ? [] : null;
   }
 
+  // A step's elements. Template (preset) steps name a `role`; a role that
+  // resolves to nothing skips the step, since a missing optional element is
+  // normal for a generic template. Motion-design steps name a `target`
+  // (motion-design/v1, plan C3): a text node id, a CSS group or selector,
+  // or a role. The design was made for this deck, so a target that matches
+  // nothing is an error naming the step, never a silently skipped beat.
+  function resolveTarget(step, scope, els) {
+    var t = step.target;
+    if (!t) return resolveRole(step.role, els);
+    var found = null;
+    if (t.role !== undefined) {
+      found = resolveRole(t.role, els);
+    } else if (t.node !== undefined) {
+      // Engines tag each text node's element with the node ids it holds
+      // (extract_text.tag_text_nodes), the same ids translations use.
+      found = scope.querySelector('[data-motion-node~="' + String(t.node).replace(/["\\]/g, "\\$&") + '"]');
+    } else if (t.group !== undefined || t.selector !== undefined) {
+      var list = Array.prototype.slice.call(scope.querySelectorAll(t.group !== undefined ? t.group : t.selector));
+      found = list.length ? list : null;
+    }
+    if (found == null || (Array.isArray(found) && !found.length)) {
+      throw new Error("motion design step '" + (step.id || step.effect) + "': target " +
+                      JSON.stringify(t) + " matches no element");
+    }
+    return found;
+  }
+
+  // The starting values an entrance comes from: a design's `from` (mapped
+  // into params by motion_design.py) or the effect's defaults.
+  function fromVars(p, defaults) {
+    var vars = {};
+    var keys = ["opacity", "x", "y", "scale", "rotation"];
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (p[k] !== undefined) vars[k] = p[k];
+      else if (defaults[k] !== undefined) vars[k] = defaults[k];
+    }
+    return vars;
+  }
+
+  // A brand colour by design-token name (`--ds-color-<name>`); motion may
+  // only use brand colours (plan C5), so an unknown name is an error.
+  function brandColor(ds, name) {
+    var value = getComputedStyle(scopeElement(ds.scope)).getPropertyValue("--ds-color-" + name).trim();
+    if (!value) throw new Error("unknown brand colour token '" + name + "' (no --ds-color-" + name + ")");
+    return value;
+  }
+
+  // Groups word/char spans into lines by their laid-out vertical position.
+  function groupByLine(spans) {
+    var lines = [];
+    var lastTop = null;
+    spans.forEach(function (span) {
+      var top = Math.round(span.offsetTop);
+      if (lastTop === null || Math.abs(top - lastTop) > 2) { lines.push([]); lastTop = top; }
+      lines[lines.length - 1].push(span);
+    });
+    return lines;
+  }
+
+  // A camera move (drift, camera) zooms around the centre of the frame. A
+  // full-frame wrapper's own centre is that; <body> in a standalone page
+  // (the Remotion engine's iframes) is only as tall as its content, so its
+  // origin is set to the viewport centre in its own coordinates.
+  function frameCenterOrigin(el) {
+    if (el !== document.body) {
+      el.style.transformOrigin = "50% 50%";
+      return;
+    }
+    var r = el.getBoundingClientRect();
+    el.style.transformOrigin = (window.innerWidth / 2 - r.left) + "px " + (window.innerHeight / 2 - r.top) + "px";
+  }
+
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var SVG_SHAPES = "path, line, polyline, polygon, circle, ellipse, rect";
+
+  // The point where the segment from a box's centre towards `toward` leaves
+  // the box, pushed `gap` px further out.
+  function edgePoint(box, toward, gap) {
+    var cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+    var dx = toward.x - cx, dy = toward.y - cy;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var t = Math.min(dx ? (box.w / 2) / Math.abs(dx) : Infinity, dy ? (box.h / 2) / Math.abs(dy) : Infinity);
+    return { x: cx + dx * t + (dx / len) * gap, y: cy + dy * t + (dy / len) * gap };
+  }
+
   // Effect primitives - the only place actual GSAP tween code lives.
   // Every template step names one of these by `effect`; new *effects*
   // (as opposed to new *templates*) are the rare case that needs a JS
@@ -376,6 +466,8 @@
       if (params.y !== undefined) vars.y = params.y;
       if (params.x !== undefined) vars.x = params.x;
       if (params.scale !== undefined) vars.scale = params.scale;
+      if (params.opacity !== undefined) vars.opacity = params.opacity;
+      if (params.rotation !== undefined) vars.rotation = params.rotation;
       if (params.stagger !== undefined) {
         vars.stagger = typeof params.stagger === "string"
           ? resolveDurationToken(ds, params.stagger, ds.durationFast)
@@ -383,6 +475,14 @@
       }
       if (position === undefined || position === null) tl.from(target, vars);
       else tl.from(target, vars, position);
+      // A blur-in is its own tween: "none" (the settled filter) has no
+      // number for GSAP to interpolate towards, so both ends are explicit.
+      if (params.blur) {
+        tl.fromTo(target, { filter: "blur(" + params.blur + "px)" }, {
+          filter: "blur(0px)", duration: vars.duration, ease: vars.ease, stagger: vars.stagger,
+          immediateRender: true,
+        }, position === undefined || position === null ? "<" : position);
+      }
     },
     accent_line: function (tl, ds, target, position) {
       drawAccentLine(tl, ds, target, position);
@@ -470,7 +570,7 @@
     // Slow camera push-in on the whole slide, for the slide's full length.
     drift: function (tl, ds, target, position, step) {
       var p = step.params || {};
-      asList(target).forEach(function (el) { el.style.transformOrigin = "50% 50%"; });
+      asList(target).forEach(frameCenterOrigin);
       tl.fromTo(target, { scale: 1 }, {
         scale: p.scale !== undefined ? p.scale : 1.035,
         duration: ds.slideDuration, ease: "none", immediateRender: false,
@@ -487,7 +587,165 @@
         ease: step.ease || "power2.in", immediateRender: false,
       }, Math.max(0, ds.slideDuration - duration));
     },
+
+    // ----- motion-design/v1 (plan C3), for Claude's per-deck designs -----
+
+    // Text enters per word, per character or per line. CJK text splits per
+    // character even `by: word`, since it has no spaces between words.
+    // Lines are measured once, at build time.
+    text_split: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var spans = [];
+      asList(target).forEach(function (el) { spans = spans.concat(splitWords(el, p.by === "char")); });
+      if (!spans.length) return;
+      var units = p.by === "line" ? groupByLine(spans) : spans;
+      var vars = fromVars(p, { opacity: 0, y: 24 });
+      vars.duration = resolveDurationToken(ds, step.duration, ds.slideEnter);
+      vars.ease = step.ease || ds.ease;
+      var stagger = p.stagger !== undefined ? p.stagger : (p.by === "line" ? 0.14 : 0.04);
+      var sub = gsap.timeline();
+      units.forEach(function (unit, i) { sub.from(unit, vars, i * stagger); });
+      tl.add(sub, position);
+    },
+
+    // Strokes draw themselves: SVG shapes in the target (or the target
+    // itself when it is one), one after another.
+    draw_svg: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var shapes = [];
+      asList(target).forEach(function (el) {
+        if (typeof el.getTotalLength === "function") shapes.push(el);
+        else shapes = shapes.concat(Array.prototype.slice.call(el.querySelectorAll(SVG_SHAPES)));
+      });
+      shapes = shapes.filter(function (s) { return typeof s.getTotalLength === "function" && s.getTotalLength() > 0; });
+      if (!shapes.length) {
+        throw new Error("motion design step '" + (step.id || "draw_svg") + "': draw_svg found no SVG shapes to draw");
+      }
+      var duration = resolveDurationToken(ds, step.duration, ds.slideEnter * 1.5);
+      var stagger = p.stagger !== undefined ? p.stagger : 0.12;
+      var sub = gsap.timeline();
+      shapes.forEach(function (shape, i) {
+        var len = shape.getTotalLength();
+        shape.style.strokeDasharray = len + " " + len;
+        sub.fromTo(shape, { strokeDashoffset: len }, {
+          strokeDashoffset: 0, duration: duration, ease: step.ease || "power1.inOut", immediateRender: true,
+        }, i * stagger);
+      });
+      tl.add(sub, position);
+    },
+
+    // Emphasis in a brand colour: a highlighter sweep behind the text
+    // (`mode: sweep`, default) or the text turning that colour (`mode: color`).
+    highlight: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var color = brandColor(ds, p.color || "accent-signal");
+      var vars = {
+        duration: resolveDurationToken(ds, step.duration, ds.slideEnter),
+        ease: step.ease || ds.ease, immediateRender: p.mode !== "color",
+      };
+      if (p.stagger !== undefined) vars.stagger = p.stagger;
+      if (p.mode === "color") {
+        vars.color = color;
+        tl.fromTo(target, { color: function (i, el) { return getComputedStyle(el).color; } }, vars, position);
+        return;
+      }
+      var tint = "color-mix(in srgb, " + color + " " + Math.round((p.alpha !== undefined ? p.alpha : 0.3) * 100) + "%, transparent)";
+      asList(target).forEach(function (el) {
+        el.style.backgroundImage = "linear-gradient(" + tint + ", " + tint + ")";
+        el.style.backgroundRepeat = "no-repeat";
+        el.style.backgroundPosition = "0 100%";
+      });
+      vars.backgroundSize = "100% 100%";
+      tl.fromTo(target, { backgroundSize: "0% 100%" }, vars, position);
+    },
+
+    // A brief pulse at a beat: up and back down once. The amplitude is
+    // capped (plan C5) so emphasis never reads as shaking.
+    emphasis: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var scale = Math.min(p.scale !== undefined ? p.scale : 1.06, 1.15);
+      var duration = resolveDurationToken(ds, step.duration, ds.slideEnter);
+      tl.fromTo(target, { scale: 1 }, {
+        scale: scale, duration: duration / 2, ease: "sine.inOut", yoyo: true, repeat: 1,
+        immediateRender: false,
+      }, position);
+    },
+
+    // An arrow drawn from the target to `params.to`, for diagrams whose
+    // connectors aren't SVG. Its geometry is measured before any tween
+    // exists (runTemplateSteps' pre-pass), so entrance transforms on the
+    // two boxes never skew it.
+    path_connect: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      var geo = step.__geometry;
+      var svg = geo.svg;
+      var color = brandColor(ds, p.color || "accent-signal");
+      var width = p.width !== undefined ? p.width : 3;
+      var line = document.createElementNS(SVG_NS, "path");
+      line.setAttribute("d", "M" + geo.a.x + " " + geo.a.y + " L" + geo.b.x + " " + geo.b.y);
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", color);
+      line.setAttribute("stroke-width", width);
+      line.setAttribute("stroke-linecap", "round");
+      var head = document.createElementNS(SVG_NS, "polygon");
+      var ang = Math.atan2(geo.b.y - geo.a.y, geo.b.x - geo.a.x);
+      var size = width * 4;
+      var pt = function (a, r) { return (geo.b.x + Math.cos(a) * r) + "," + (geo.b.y + Math.sin(a) * r); };
+      head.setAttribute("points", geo.b.x + "," + geo.b.y + " " + pt(ang + Math.PI * 0.85, size) + " " + pt(ang - Math.PI * 0.85, size));
+      head.setAttribute("fill", color);
+      svg.appendChild(line);
+      svg.appendChild(head);
+      var len = line.getTotalLength();
+      line.style.strokeDasharray = len + " " + len;
+      var duration = resolveDurationToken(ds, step.duration, ds.slideEnter * 1.5);
+      var sub = gsap.timeline();
+      sub.fromTo(line, { strokeDashoffset: len }, {
+        strokeDashoffset: 0, duration: duration, ease: step.ease || "power1.inOut", immediateRender: true,
+      }, 0);
+      sub.fromTo(head, { opacity: 0 }, { opacity: 1, duration: ds.durationFast, immediateRender: true }, duration);
+      tl.add(sub, position);
+    },
+
+    // A slow camera move over the whole slide: a push-in, or a pan (a
+    // push-in that also travels by x/y px). Scale is capped at 1.08 (C5).
+    camera: function (tl, ds, target, position, step) {
+      var p = step.params || {};
+      asList(target).forEach(frameCenterOrigin);
+      tl.fromTo(target, { scale: 1, x: 0, y: 0 }, {
+        scale: Math.min(p.scale !== undefined ? p.scale : 1.04, 1.08),
+        x: p.x || 0, y: p.y || 0, duration: ds.slideDuration, ease: "none", immediateRender: false,
+      }, 0);
+    },
   };
+
+  // path_connect's geometry, in the overlay's own coordinates: measured
+  // before any step adds a tween, so the boxes are at their laid-out
+  // positions.
+  function measureConnector(step, scope, els) {
+    var from = resolveTarget(step, scope, els);
+    var to = resolveTarget({ id: step.id, effect: step.effect, target: (step.params || {}).to }, scope, els);
+    from = asList(from)[0];
+    to = asList(to)[0];
+    // The overlay goes in first; its own box is the coordinate origin, so
+    // the arrow lands right whatever the container's margins or position.
+    var container = slideElement(scope);
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("data-motion-overlay", "");
+    svg.style.cssText = "position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;z-index:5";
+    container.appendChild(svg);
+    var origin = svg.getBoundingClientRect();
+    var box = function (el) {
+      var r = el.getBoundingClientRect();
+      return { x: r.left - origin.left, y: r.top - origin.top, w: r.width, h: r.height };
+    };
+    var a = box(from), b = box(to);
+    var gap = (step.params || {}).gap !== undefined ? step.params.gap : 10;
+    return {
+      svg: svg,
+      a: edgePoint(a, { x: b.x + b.w / 2, y: b.y + b.h / 2 }, gap),
+      b: edgePoint(b, { x: a.x + a.w / 2, y: a.y + a.h / 2 }, gap),
+    };
+  }
 
   // Plays one template's `steps` (from templates_config.js) into `tl`.
   // Effects that bring an element in from a hidden starting state. Two of
@@ -495,7 +753,7 @@
   // one's hidden state as its end value, so the element never appears
   // (e.g. a `subtitle` that is also one of the `body` paragraphs). The
   // first entrance step claims an element; later entrance steps skip it.
-  var ENTRANCE_EFFECTS = { reveal: true, count_up: true, pop: true, words: true, beats: true };
+  var ENTRANCE_EFFECTS = { reveal: true, count_up: true, pop: true, words: true, beats: true, text_split: true };
 
   function unclaimed(target, claimed) {
     if (Array.isArray(target)) {
@@ -508,11 +766,17 @@
     var ranStepIds = {};
     var anyStepRan = false;
     var claimed = [];
+    steps = steps.slice();   // the template's own list is shared by every slide using it
+    for (var m = 0; m < steps.length; m++) {
+      if (steps[m].effect === "path_connect") {
+        steps[m] = Object.assign({}, steps[m], { __geometry: measureConnector(steps[m], ds.scope, els) });
+      }
+    }
     for (var i = 0; i < steps.length; i++) {
       var step = steps[i];
       if (step.skip_if_ran && ranStepIds[step.skip_if_ran]) continue;
 
-      var target = resolveRole(step.role, els);
+      var target = resolveTarget(step, ds.scope, els);
       if (target != null && ENTRANCE_EFFECTS[step.effect]) target = unclaimed(target, claimed);
       var isEmpty = target == null || (Array.isArray(target) && target.length === 0);
       if (isEmpty) continue;
@@ -528,7 +792,19 @@
         throw new Error("Unknown animation effect in templates_config.js: " + step.effect);
       }
       var position = (!anyStepRan && step.position_if_first !== undefined) ? step.position_if_first : step.position;
+      var before = step.label ? tl.getChildren(false, true, true) : [];
       effect(tl, ds, target, resolvePosition(position, ds), step);
+      // A motion-design step with an id labels where it starts, so a later
+      // step can be placed "<id>+=0.2" from it (plan C3). Presets don't
+      // label: their positions keep GSAP's own meaning, and they render
+      // exactly as before designs existed.
+      if (step.label) {
+        // Children are kept in start-time order, so compare, don't slice.
+        var added = tl.getChildren(false, true, true).filter(function (c) { return before.indexOf(c) === -1; });
+        if (added.length) {
+          tl.addLabel(step.label, Math.min.apply(null, added.map(function (c) { return c.startTime(); })));
+        }
+      }
 
       if (step.id) ranStepIds[step.id] = true;
       anyStepRan = true;
@@ -542,27 +818,84 @@
 
   // Builds one slide's timeline against `scope` - the single construction
   // path every engine uses, so what a seeking renderer draws is what the
-  // live engine plays. Paused unless `opts.paused === false`.
+  // live engine plays. Paused unless `opts.paused === false`. The steps are
+  // `opts.steps` when a motion design gives this slide its own
+  // (motion_design.py resolves them), else the named template's.
   window.__motionBuildTimeline = function (scope, opts) {
     opts = opts || {};
     var tl = gsap.timeline(opts.paused === false ? undefined : { paused: true });
     runTemplateSteps(tl, readTokens(scope, opts.duration), roleElements(scope),
-                     templateSteps(opts.template, opts.templates));
+                     opts.steps || templateSteps(opts.template, opts.templates));
     // Deliberately no .clearProps()/.reverse() - every engine relies on the
     // timeline holding its final state for the rest of the slide (see
     // gsap_animation_authoring SKILL.md).
     return tl;
   };
 
+  // One half of a transition between two slides (plan C3), as tweens on
+  // the slide's root element. Both slides' clips overlap for the
+  // transition: the incoming half plays at the start of its clip, the
+  // outgoing half at `tr.at`. A crossfade or wipe only moves the incoming
+  // slide, which sits on top; a push moves both.
+  function addTransition(tl, el, tr, incoming) {
+    var d = tr.duration;
+    var dir = tr.direction || "left";
+    var at = incoming ? 0 : tr.at;
+    if (tr.type === "crossfade") {
+      if (incoming) tl.fromTo(el, { opacity: 0 }, { opacity: 1, duration: d, ease: "none", immediateRender: true }, at);
+    } else if (tr.type === "push") {
+      var horizontal = dir === "left" || dir === "right";
+      var sign = dir === "left" || dir === "up" ? 1 : -1;
+      var prop = horizontal ? "xPercent" : "yPercent";
+      var from = {}, to = { duration: d, ease: "power2.inOut", immediateRender: incoming };
+      from[prop] = incoming ? 100 * sign : 0;
+      to[prop] = incoming ? 0 : -100 * sign;
+      tl.fromTo(el, from, to, at);
+    } else if (tr.type === "wipe") {
+      var hidden = { left: "inset(0% 0% 0% 100%)", right: "inset(0% 100% 0% 0%)",
+                     up: "inset(100% 0% 0% 0%)", down: "inset(0% 0% 100% 0%)" }[dir];
+      if (incoming) {
+        tl.fromTo(el, { clipPath: hidden }, {
+          clipPath: "inset(0% 0% 0% 0%)", duration: d, ease: "power2.inOut", immediateRender: true,
+        }, at);
+      }
+    }
+  }
+
   // Seek-mode entry point for one slide among several in one page
   // (HyperFrames, plan B4): resolves roles inside `rootEl` only, registers
   // the paused timeline as window.__timelines[slideId] for the renderer to
   // seek, and never touches page visibility.
+  //
+  // With `opts.lead` (seconds), the slide's clip starts that much before
+  // the slide does, for the incoming half of a transition: its own
+  // choreography starts at `lead`, so it stays on the narration.
+  // `opts.transitionIn` / `opts.transitionOut` are played on `rootEl` by
+  // engines that composite the slides in one page (HyperFrames); Remotion
+  // applies them to the iframe itself.
   window.__motionRunSlide = function (rootEl, opts) {
     opts = opts || {};
-    var tl = window.__motionBuildTimeline(rootEl, {
-      template: opts.template, templates: opts.templates, duration: opts.duration,
-    });
+    var tl;
+    try {
+      var lead = opts.lead || 0;
+      var nested = lead > 0 || opts.transitionIn || opts.transitionOut;
+      var inner = window.__motionBuildTimeline(rootEl, {
+        template: opts.template, templates: opts.templates, duration: opts.duration, steps: opts.steps,
+        paused: !nested,
+      });
+      tl = inner;
+      if (nested) {
+        tl = gsap.timeline({ paused: true });
+        tl.add(inner, lead);
+        var el = rootEl === document ? document.body : rootEl;
+        if (opts.transitionIn) addTransition(tl, el, opts.transitionIn, true);
+        if (opts.transitionOut) addTransition(tl, el, opts.transitionOut, false);
+      }
+    } catch (e) {
+      // Name the slide: a renderer reports this error with no other clue
+      // about which slide's page threw it.
+      throw new Error((opts.slideId || "slide") + ": " + (e && e.message ? e.message : e));
+    }
     window.__timelines = window.__timelines || {};
     window.__timelines[opts.slideId || "slide"] = tl;
     return tl;
@@ -574,15 +907,18 @@
   // slide - are left alone.
   function run() {
     if (window.__ANIMATION_TEMPLATE__ === undefined) return;
+    // __ANIMATION_STEPS__ / __ANIMATION_LEAD__: a motion design's steps for
+    // this slide and its transition lead (the Remotion engine's pages).
     if (window.__MOTION_MODE__ === "seek") {
       window.__motionRunSlide(document, {
         slideId: window.__ANIMATION_SLIDE_ID__, template: window.__ANIMATION_TEMPLATE__,
-        duration: window.__ANIMATION_SLIDE_DURATION__,
+        duration: window.__ANIMATION_SLIDE_DURATION__, steps: window.__ANIMATION_STEPS__,
+        lead: window.__ANIMATION_LEAD__,
       });
     } else {
       window.__motionBuildTimeline(document, {
         template: window.__ANIMATION_TEMPLATE__, paused: false,
-        duration: window.__ANIMATION_SLIDE_DURATION__,
+        duration: window.__ANIMATION_SLIDE_DURATION__, steps: window.__ANIMATION_STEPS__,
       });
     }
 

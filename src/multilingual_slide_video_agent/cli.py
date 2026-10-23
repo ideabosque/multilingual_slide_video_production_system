@@ -256,19 +256,20 @@ def production_validate(production_path: str, localization: str | None, run_id: 
 
 @production.command("render-motion")
 @click.option("--engine", type=click.Choice(["hyperframes", "remotion"]), help="Defaults to config/motion.yaml's default_engine")
-@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
+@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="A narrated language's production.json (msv production narrate output)")
 @click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
 @click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
 @click.option("--slides-dir", type=click.Path(exists=True, file_okay=False), help="Rendered slide images (msv slides render-images). Optional; the HyperFrames engine does not need them")
 @click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
-@click.option("--roles", "roles_path", type=click.Path(exists=True), help="roles_<language>.json from msv slides extract-roles (optional; the Remotion engine's content contract)")
+@click.option("--roles", "roles_path", type=click.Path(exists=True), help="roles_<language>.json from msv slides extract-roles (optional; recorded per slide in the render context)")
+@click.option("--motion-design", "motion_design_path", type=click.Path(exists=True), help="The deck's motion_design.json (motion-design/v1), played instead of each slide's template. Validated before rendering")
 @click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
 @click.option("--output-name", help="Defaults to video.mp4")
 @click.option("--viewport", default="1920x1080", show_default=True)
 def production_render_motion(
     engine: str | None, production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str | None,
-    localization: str | None, roles_path: str | None, output_dir: str | None, output_name: str | None,
-    viewport: str,
+    localization: str | None, roles_path: str | None, motion_design_path: str | None, output_dir: str | None,
+    output_name: str | None, viewport: str,
 ) -> None:
     """The `rendering` stage: render a narrated language (msv production narrate) as its animated video with a motion engine, and record it in production.json. Writes <output>.mp4 plus <output>.motion.json."""
     from multilingual_slide_video_agent.production.motion.errors import MotionError
@@ -279,7 +280,7 @@ def production_render_motion(
             production_path=production_path, translated_deck_dir=translated_deck_dir,
             animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization,
             roles_path=roles_path, output_dir=output_dir, output_name=output_name,
-            engine_name=engine, viewport=viewport,
+            engine_name=engine, viewport=viewport, motion_design_path=motion_design_path,
         )
     except MotionError as e:
         _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
@@ -329,10 +330,24 @@ def motion_install() -> None:
         stderr = (getattr(e, "stderr", "") or str(e))[-2000:]
         _echo_result({"ok": False, "errors": [f"npm ci failed: {stderr}"]})
         return
+    # Remotion renders with its own pinned chrome-headless-shell. Download it
+    # now, so a render never fetches anything (plan B3 #3).
+    ensure = motion_dir / "remotion" / "ensure-browser.mjs"
+    browser = None
+    if ensure.exists():
+        result = subprocess.run([shutil.which("node") or "node", str(ensure)], cwd=motion_dir,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            _echo_result({"ok": False, "errors": [
+                f"Remotion's browser download failed: {(result.stdout + result.stderr)[-2000:]}"
+            ]})
+            return
+        browser = json.loads(result.stdout.strip().splitlines()[-1]).get("status", {}).get("path")
     _echo_result({
         "ok": True, "installed": True,
         "from_lockfile": (motion_dir / "package-lock.json").exists(),
         "motion_dir": str(motion_dir),
+        "remotion_browser": browser,
     })
 
 

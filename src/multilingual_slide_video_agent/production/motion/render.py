@@ -6,11 +6,13 @@ to an exact-length silent video, then applies the one shared post-pass
 (captions + narration) and B6 validation, writing `<output>.motion.json`
 and recording the video in production.json.
 
-Engines: `hyperframes` (frame-exact, the default). `remotion` is planned
-(Phase 3). The Playwright live-capture engine was retired on 2026-10-22.
+Engines: `hyperframes` (frame-exact, the default) and `remotion` (frame-exact,
+deck-faithful iframes; Phase 3). Both seek the same per-slide GSAP
+timelines. The Playwright live-capture engine was retired on 2026-10-22.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import time
@@ -34,14 +36,15 @@ def motion_manifest_path(out_dir: Path, output_name: str) -> Path:
 
 
 def get_engine(name: str) -> MotionEngine:
-    """Resolve an engine name to an instance. `remotion` is built in Phase 3
-    and says so loudly here rather than pretending to be selectable."""
+    """Resolve an engine name to an instance."""
     if name == "hyperframes":
         from multilingual_slide_video_agent.production.motion.hyperframes_engine import HyperFramesEngine
 
         return HyperFramesEngine()
     if name == "remotion":
-        raise MotionError("engine 'remotion' is implemented in this plan's Phase 3")
+        from multilingual_slide_video_agent.production.motion.remotion_engine import RemotionEngine
+
+        return RemotionEngine()
     raise MotionError(
         f"unknown motion engine '{name}' - known engines: {', '.join(KNOWN_ENGINE_NAMES)}"
     )
@@ -83,6 +86,7 @@ def render_motion(
     engine_name: str | None = None,
     viewport: str = "1920x1080",
     record_in_production: bool = True,
+    motion_design_path: str | None = None,
 ) -> dict[str, Any]:
     """Render one language's animated video (default `video.mp4`) against
     the narration timing in its `production.json` - the `rendering` stage
@@ -93,6 +97,10 @@ def render_motion(
     recorded back into that production.json (`output_video`, duration
     check, engine, manifest), so `msv production validate` and publishing
     use it. Pass False to render a side artifact without touching it.
+
+    `motion_design_path` is the deck's motion-design/v1 file (plan C3):
+    validated before anything renders, then played by the engine in place
+    of each slide's template.
 
     Returns a status envelope whose `outputs` describe the video, its
     captions and its motion manifest. Raises
@@ -112,6 +120,22 @@ def render_motion(
     )
     language, run_id, project_id = ctx.language, ctx.run_id, ctx.project_id
     logger = RunLogger(run_id, project_id)
+    design_record = None
+    if motion_design_path:
+        from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+        from multilingual_slide_video_agent.slides.motion_design import MotionDesignError, load_motion_design
+
+        style = str(ctx.motion_config.get("animation_style", "calm"))
+        try:
+            ctx.motion_design = load_motion_design(
+                motion_design_path, slide_ids=[s.slide_id for s in ctx.slides],
+                presets=set(load_template_config(style)),
+            )
+        except MotionDesignError as e:
+            raise MotionError(str(e)) from e
+        design_bytes = Path(motion_design_path).read_bytes()
+        design_record = {"path": str(Path(motion_design_path).resolve()),
+                         "sha256": hashlib.sha256(design_bytes).hexdigest()}
 
     engine_name = engine_name or str(ctx.motion_config.get("default_engine", "hyperframes"))
     engine = get_engine(engine_name)
@@ -141,6 +165,7 @@ def render_motion(
             for s in ctx.slides
         ],
         "templates": {s.slide_id: s.template for s in ctx.slides},
+        "motion_design": design_record,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -173,12 +198,17 @@ def render_motion(
     except MotionError:
         raise
     except Exception as e:  # noqa: BLE001 - unexpected failures still get named loudly + logged
+        message = str(e)
+        # Windows' "[WinError 2] The system cannot find the file specified"
+        # doesn't say which file.
+        if isinstance(e, OSError) and e.filename and str(e.filename) not in message:
+            message = f"{message}: {e.filename}"
         logger.log(
             agent="slideshow_production_agent", skill="slideshow_video_production",
             stage="rendering", language=language, event="motion_render_failed",
-            status="failed", errors=[str(e)],
+            status="failed", errors=[message],
         )
-        raise MotionError(str(e)) from e
+        raise MotionError(message) from e
 
     shutil.rmtree(work_dir, ignore_errors=True)
 

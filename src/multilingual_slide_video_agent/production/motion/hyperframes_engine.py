@@ -39,9 +39,9 @@ from multilingual_slide_video_agent import config as cfg
 from multilingual_slide_video_agent.media import ffprobe_duration
 from multilingual_slide_video_agent.production.motion.context import MotionRenderContext
 from multilingual_slide_video_agent.production.motion.errors import MotionError
-from multilingual_slide_video_agent.production.motion.assembly import segment_frame_counts
+from multilingual_slide_video_agent.production.motion.clips import plan_clips
 from multilingual_slide_video_agent.slides.animation_templates import load_template_config
-from multilingual_slide_video_agent.slides.extract_text import list_slide_files
+from multilingual_slide_video_agent.slides.extract_text import list_slide_files, tag_text_nodes
 
 MIN_NODE_MAJOR = 22
 TITLE_COMPOSITION_ID = "title"
@@ -158,16 +158,20 @@ def _sanitize_css(css: str) -> str:
 
 def slide_to_template(
     slide_html: str, *, slide_id: str, template: str, width: int, height: int, duration: float = 0.0,
-    templates: dict | None = None, extra_css: str = "",
+    templates: dict | None = None, extra_css: str = "", runtime_opts: dict | None = None,
 ) -> tuple[str, int]:
     """Convert one translated slide (a full HTML document) into a
     HyperFrames sub-composition: a single bare `<template>` whose root
     carries the slide's styles, its body content, and a script that builds
     the slide's timeline inside that root only. Returns (html, number of
-    the deck's own <script> elements dropped)."""
+    the deck's own <script> elements dropped).
+
+    `runtime_opts` adds a motion design's options for this clip (its
+    steps, transition lead and transitions; see clips.ClipPlan)."""
     soup = BeautifulSoup(_INJECTION_RE.sub("", slide_html), "lxml")
     head = soup.head or soup.new_tag("head")
     body = soup.body or soup.new_tag("body")
+    tag_text_nodes(soup, slide_id)
 
     # The deck's own scripts would run in the shared page (and on every
     # seek); the animation comes from the runtime instead.
@@ -193,6 +197,10 @@ def slide_to_template(
         wrapper_style += body["style"]
     content = "".join(str(child) for child in body.contents)
 
+    opts = {"slideId": slide_id, "template": template, "duration": round(duration, 6)}
+    if templates:
+        opts["templates"] = templates
+    opts.update(runtime_opts or {})
     html = (
         f'<template id="{slide_id}-template">\n'
         f'<div id="root" data-composition-id="{slide_id}" data-width="{width}" data-height="{height}">\n'
@@ -201,9 +209,7 @@ def slide_to_template(
         + f'<div data-motion-slide-body{wrapper_attrs} style="{wrapper_style}">{content}</div>\n'
         "<script>\n"
         f'  window.__motionRunSlide(document.querySelector(\'[data-composition-id="{slide_id}"]\'),\n'
-        f"    {{ slideId: {json.dumps(slide_id)}, template: {json.dumps(template)}, duration: {duration:.6f}"
-        + (f", templates: {json.dumps(templates)}" if templates else "")
-        + " });\n"
+        f"    {script_json(opts)});\n"
         "</script>\n"
         "</div>\n"
         "</template>\n"
@@ -221,14 +227,32 @@ TITLE_BACKDROP_TEMPLATES = {
 TITLE_BACKDROP_CSS = "#root [data-motion-slide-body] { filter: blur(7px) brightness(0.55) saturate(1.1); }"
 
 
-def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
-    """Write the HyperFrames project for one language into `project_dir`.
-    Clip boundaries are whole frames rounded from the absolute timeline -
-    the same `segment_frame_counts` validation relies on, so every slide is cut
-    on the frame validation expects."""
+def copy_runtime_assets(animation_dir: Path, dest: Path, names) -> None:
+    """Copy the runtime files a page loads (package code, the bundle's
+    design tokens) into `dest`, naming a missing one."""
     from multilingual_slide_video_agent.slides.render import _animation_asset_source
 
+    for name in names:
+        source = _animation_asset_source(animation_dir, name)
+        if not source.exists():
+            raise MotionError(f"{source} not found - the animation bundle at {animation_dir} has no {name} "
+                              "(regenerate it with msv slides generate-animation)")
+        shutil.copy2(source, dest / name)
+
+
+def script_json(value) -> str:
+    """JSON safe inside an inline <script>: a `</script>` in a design's
+    text can't end the element."""
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
+
+
+def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
+    """Write the HyperFrames project for one language into `project_dir`.
+    Clips come from clips.plan_clips: whole-frame boundaries rounded from
+    the absolute timeline (the same `segment_frame_counts` validation relies
+    on), plus a motion design's steps and transition overlaps."""
     width, height = _parse_viewport(ctx.viewport)
+    list_slide_files(ctx.translated_deck_dir)   # names the deck, not the project copy, when it has no slides
     if project_dir.exists():
         shutil.rmtree(project_dir)
     # The deck's own files (styles, assets) at the project root, so its
@@ -236,8 +260,7 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
     shutil.copytree(ctx.translated_deck_dir, project_dir)
     for stale in list_slide_files(project_dir):
         stale.unlink()
-    for name in _INDEX_ASSETS:
-        shutil.copy2(_animation_asset_source(ctx.animation_dir, name), project_dir / name)
+    copy_runtime_assets(ctx.animation_dir, project_dir, _INDEX_ASSETS)
     # The template definitions are project config, not per-deck data: a
     # bundle carries a snapshot from when it was generated, and it can't
     # know which motion style this render uses.
@@ -250,40 +273,38 @@ def build_project(ctx: MotionRenderContext, project_dir: Path) -> dict:
     compositions.mkdir(exist_ok=True)
 
     slide_files = {p.stem: p for p in list_slide_files(ctx.translated_deck_dir)}
-    template_by_slide = {s.slide_id: s.template for s in ctx.slides}
-
-    frame_counts = segment_frame_counts([t["end_time"] - t["start_time"] for t in ctx.timing], ctx.fps)
     clips, dropped_scripts = [], {}
-    start_frame = 0
-    for item, frames in zip(ctx.timing, frame_counts):
-        if item.get("kind") == "title":
-            first_slide = ctx.slides[0].slide_id
+    plan = plan_clips(ctx)
+    for i, clip in enumerate(plan):
+        duration = clip.frames / ctx.fps
+        if clip.kind == "title":
             html, _dropped = slide_to_template(
-                slide_files[first_slide].read_text(encoding="utf-8"), slide_id=TITLE_COMPOSITION_ID,
-                template="title_backdrop", width=width, height=height, duration=frames / ctx.fps,
+                slide_files[ctx.slides[0].slide_id].read_text(encoding="utf-8"), slide_id=TITLE_COMPOSITION_ID,
+                template="title_backdrop", width=width, height=height, duration=duration,
                 templates=TITLE_BACKDROP_TEMPLATES, extra_css=TITLE_BACKDROP_CSS,
+                runtime_opts=clip.runtime_options(ctx.fps),
             )
-            (compositions / f"{TITLE_COMPOSITION_ID}.html").write_text(html, encoding="utf-8")
-            cid = TITLE_COMPOSITION_ID
         else:
-            cid = item["slide_id"]
-            source = slide_files.get(cid)
+            source = slide_files.get(clip.id)
             if source is None:
-                raise MotionError(f"no translated slide file for '{cid}' in {ctx.translated_deck_dir}")
+                raise MotionError(f"no translated slide file for '{clip.id}' in {ctx.translated_deck_dir}")
             html, dropped = slide_to_template(
-                source.read_text(encoding="utf-8"), slide_id=cid, template=template_by_slide[cid],
-                width=width, height=height, duration=frames / ctx.fps,
+                source.read_text(encoding="utf-8"), slide_id=clip.id, template=clip.template,
+                width=width, height=height, duration=duration, runtime_opts=clip.runtime_options(ctx.fps),
             )
-            (compositions / f"{cid}.html").write_text(html, encoding="utf-8")
             if dropped:
-                dropped_scripts[cid] = dropped
+                dropped_scripts[clip.id] = dropped
+        (compositions / f"{clip.id}.html").write_text(html, encoding="utf-8")
+        # Clips overlap only during a transition: alternating tracks keep
+        # overlapping clips apart, and a later clip sits on top (the
+        # incoming slide of a crossfade or wipe).
         clips.append(
-            f'    <div class="clip" id="{cid}-host" data-composition-id="{cid}" '
-            f'data-composition-src="compositions/{cid}.html" '
-            f'data-start="{start_frame / ctx.fps:.6f}" data-duration="{frames / ctx.fps:.6f}" '
-            f'data-track-index="0"></div>'
+            f'    <div class="clip" id="{clip.id}-host" data-composition-id="{clip.id}" '
+            f'data-composition-src="compositions/{clip.id}.html" '
+            f'data-start="{clip.host_start / ctx.fps:.6f}" data-duration="{clip.host_frames / ctx.fps:.6f}" '
+            f'data-track-index="{i % 2}" style="z-index:{i + 1}"></div>'
         )
-        start_frame += frames
+    start_frame = plan[-1].start + plan[-1].frames
 
     index = (
         "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"

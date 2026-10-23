@@ -61,6 +61,9 @@ class MotionRenderContext:
     max_duration_drift_seconds: float
     video_config: dict[str, Any] = field(default_factory=dict)
     motion_config: dict[str, Any] = field(default_factory=dict)
+    # A validated motion-design/v1 document (plan C3), when the deck has
+    # one; None plays each slide's template.
+    motion_design: dict[str, Any] | None = None
 
     @property
     def total_duration(self) -> float:
