@@ -1,0 +1,53 @@
+# Motion rendering defaults (motion-engines-and-hardening-plan B3 #4).
+# Everything here is the motion-rendering counterpart of video.yaml: video.yaml
+# still governs slideshow.mp4's static rendering; this file governs
+# render-motion's animated output for all engines.
+#
+# default_engine is Open decision D1, changed only by the user's decision.
+# 2026-10-22: the user chose `remotion`. It renders the deck's own fonts,
+# while HyperFrames swaps system fonts for its bundled ones and looks fonts
+# up on Google Fonts while rendering (plan status block). `--engine
+# hyperframes` still selects HyperFrames. Remotion license: free for
+# individuals and companies of up to 3 people (plan B5).
+
+default_engine: remotion
+# Motion style: `calm` (config/animation_templates.yaml - short fades, brand
+# ease-out) or `playful` (config/animation_templates_playful.yaml - springy
+# pops, kinetic headlines, beats across the narration, ambient drift, exits).
+# Playful requested 2026-10-22.
+animation_style: playful
+fps: 30                      # animation needs real fps, unlike slideshow.mp4's 5fps
+
+encode:
+  crf: 19
+  preset: medium
+  pix_fmt: yuv420p
+
+engines:
+  # Pinned in motion/package.json (0.8.140, plan B4 spike). Always run with
+  # HYPERFRAMES_NO_TELEMETRY=1 and DO_NOT_TRACK=1 - telemetry is on by default.
+  hyperframes: { workers: auto, timeout_seconds: 1800 }   # read by Phase 2b's engine
+  remotion: { concurrency: auto, timeout_seconds: 1800, composition_id: Slideshow }
+
+validation:
+  # B6 check 2 - a boundary frame is "blank" when its grayscale mean is this
+  # close to pure white/black AND its stddev is under this threshold (the
+  # mean/stddev pair deliberately allows near-uniform *branded* backgrounds;
+  # the brand's warm off-white page background is documented in
+  # config/design_system.yaml).
+  blank_max_stddev: 6.0
+  blank_white_min_mean: 244
+  blank_black_max_mean: 12
+  # A blank START frame is fine when it is just the slide's own background
+  # (every element still at opacity 0 - normal on a white deck): its mean
+  # must be within this many gray levels of the settled frame's median.
+  background_match_max_delta: 12
+  # B6 check 3 - each slide's own first (entrance) frame vs. its
+  # settled last frame: at least this fraction of pixels must change by more
+  # than animation_pixel_delta gray levels, or the slide's animation "never
+  # visibly happened" (the failure mode the earlier plan identified as the
+  # worst one: selectors that silently resolve to nothing). A changed-pixel
+  # fraction, not a whole-frame mean, so a small headline animating fully
+  # still counts while encoder noise (a few levels) never does.
+  animation_pixel_delta: 24
+  animation_min_changed_fraction: 0.0002   # settled-frame encoder noise measured at exactly 0; small-text fixture slides score ~0.0012+

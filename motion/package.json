@@ -1,0 +1,13 @@
+{
+  "name": "motion",
+  "private": true,
+  "description": "Node toolchain for the motion engines (motion-engines-and-hardening-plan B3 #3). Pinned exact versions only - no ^ or ~ ranges, package-lock.json committed, installed via `msv motion install` (npm ci), never fetched via npx at render time.",
+  "dependencies": {
+    "@remotion/bundler": "4.0.534",
+    "@remotion/renderer": "4.0.534",
+    "hyperframes": "0.8.140",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.534"
+  }
+}

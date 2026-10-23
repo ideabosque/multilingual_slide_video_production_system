@@ -21,6 +21,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from multilingual_slide_video_agent import config as cfg
 from multilingual_slide_video_agent.slides.extract_text import _iter_text_nodes, list_slide_files
 
 
@@ -31,6 +32,30 @@ class ApplyTranslationsError(Exception):
 def _load_localization(localization_path: str | Path) -> dict[str, Any]:
     with open(localization_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _inline_word_spacing(language: str | None) -> bool:
+    """Whether `language` separates words with spaces (config/languages.yaml
+    `inline_word_spacing`, default true). Chinese/Japanese don't, so the
+    English source's spaces around inline elements are dropped for them."""
+    profile = cfg.languages_config().get("languages", {}).get(language or "", {})
+    return bool(profile.get("inline_word_spacing", True))
+
+
+def _with_original_spacing(original: str, translation: str, keep_spacing: bool) -> str:
+    """A text node's leading/trailing whitespace is what separates it from
+    neighbouring inline elements (`Fast <b>and</b> simple` -> nodes
+    "Fast ", "and", " simple"). extract_text strips it from the text Agent 1
+    translates, so it's restored here - otherwise replacing the whole node
+    glues words together across the element boundary."""
+    if not keep_spacing:
+        return translation.strip()
+    stripped = original.strip()
+    if not stripped:
+        return translation
+    lead = original[: len(original) - len(original.lstrip())]
+    trail = original[len(original.rstrip()):]
+    return f"{lead}{translation.strip()}{trail}"
 
 
 def apply_translations(
@@ -57,6 +82,7 @@ def apply_translations(
             t["node_id"]: t["text"] for t in seg.get("slide_translations", [])
         }
 
+    keep_spacing = _inline_word_spacing(localization.get("language"))
     slide_files = list_slide_files(deck_path)
     applied_nodes = 0
     slides_touched = []
@@ -75,7 +101,7 @@ def apply_translations(
         for i, node in enumerate(_iter_text_nodes(soup)):
             node_id = f"{slide_id}#n{i}"
             if node_id in remaining:
-                node.replace_with(remaining.pop(node_id))
+                node.replace_with(_with_original_spacing(str(node), remaining.pop(node_id), keep_spacing))
                 applied_nodes += 1
 
         if remaining:

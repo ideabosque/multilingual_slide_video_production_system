@@ -7,11 +7,11 @@ schema. `slides/assets/animation_runtime.js` has a small, fixed registry
 of reusable effect primitives (reveal/accent_line/count_up) and one
 generic engine that plays a template's steps into a gsap.timeline();
 adding or tuning a template is normally a YAML edit, not a JS change (see
-.claude/skills/gsap_animation_authoring/SKILL.md). This module is the
+.agents/skills/gsap_animation_authoring/SKILL.md). This module is the
 Python-side loader/validator for that config, plus the selection logic
 `generate_animation.py` uses when no explicit spec is given. Template
 choice is a motion-design judgment call - see
-.claude/skills/motion_design_principles/SKILL.md's role table, which this
+.agents/skills/motion_design_principles/SKILL.md's role table, which this
 function implements.
 """
 from __future__ import annotations
@@ -30,8 +30,15 @@ _QUOTE_HINTS = ("quote", "testimonial", "customer says", "review")
 _COMPARISON_HINTS = ("vs.", " vs ", "versus", "compared to", "comparison")
 _TIMELINE_HINTS = ("roadmap", "timeline", "milestone", "rollout plan", "phase 1")
 
-_KNOWN_ROLES = {"title", "subtitle", "body", "diagram", "stat", "cta", "nodes"}
-_KNOWN_EFFECTS = {"reveal", "accent_line", "count_up"}
+_KNOWN_ROLES = {"title", "subtitle", "body", "diagram", "stat", "cta", "nodes", "slide"}
+# reveal/accent_line/count_up: the calm style. pop/words/beats/float/drift/
+# exit: the playful style (config/animation_templates_playful.yaml).
+_KNOWN_EFFECTS = {"reveal", "accent_line", "count_up", "pop", "words", "beats", "float", "drift", "exit"}
+
+# Motion styles: each is one YAML file defining the same template names, so
+# a deck's spec.json works with either. Chosen by config/motion.yaml's
+# `animation_style`.
+STYLE_FILES = {"calm": "animation_templates.yaml", "playful": "animation_templates_playful.yaml"}
 _KNOWN_DURATION_TOKENS = {"fast", "base", "slow", "slide_enter", "slide_exit"}
 
 
@@ -63,6 +70,18 @@ def _validate_step(where: str, step: dict[str, Any], earlier_ids: set[str]) -> N
             f"{where}: params.stagger string must be one of {sorted(_KNOWN_DURATION_TOKENS)}, got {stagger!r}"
         )
 
+    for key in ("position", "position_if_first"):
+        position = step.get(key)
+        if isinstance(position, str) and position.startswith("beat:"):
+            try:
+                fraction = float(position[5:])
+            except ValueError:
+                fraction = -1.0
+            if not 0.0 <= fraction <= 1.0:
+                raise AnimationTemplateConfigError(
+                    f"{where}: {key}={position!r} - a beat position must be 'beat:<fraction between 0 and 1>'"
+                )
+
     skip_if_ran = step.get("skip_if_ran")
     if skip_if_ran is not None and skip_if_ran not in earlier_ids:
         raise AnimationTemplateConfigError(
@@ -88,9 +107,21 @@ def _validate_template_config(config: dict[str, Any]) -> None:
 
 
 @lru_cache(maxsize=None)
-def load_template_config() -> dict[str, Any]:
-    config = load_yaml("animation_templates.yaml")
+def load_template_config(style: str = "calm") -> dict[str, Any]:
+    """The templates for one motion style. Every style must define exactly
+    the calm style's template names, so the template a deck's spec.json
+    assigns to a slide exists whichever style renders it."""
+    if style not in STYLE_FILES:
+        raise AnimationTemplateConfigError(f"unknown animation_style {style!r} - known: {sorted(STYLE_FILES)}")
+    config = load_yaml(STYLE_FILES[style])
     _validate_template_config(config)
+    if style != "calm":
+        expected = set(load_template_config("calm"))
+        if set(config) != expected:
+            raise AnimationTemplateConfigError(
+                f"{STYLE_FILES[style]} must define exactly the templates in {STYLE_FILES['calm']}: "
+                f"missing {sorted(expected - set(config))}, extra {sorted(set(config) - expected)}"
+            )
     return config
 
 
@@ -118,7 +149,7 @@ def choose_template(
 ) -> str:
     """Pick a shot template for one slide.
 
-    `visual_role` — an optional per-slide field `slide-analysis-agent` can
+    `visual_role` — an optional per-slide field `slide-analysis` can
     write into `slide_analysis.json` — takes priority when it's one of
     TEMPLATE_NAMES: Agent 1's own judgment about a slide, formed while
     already analyzing its content, is a stronger signal than keyword

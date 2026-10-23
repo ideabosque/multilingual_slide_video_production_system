@@ -93,6 +93,10 @@ def video_config() -> dict[str, Any]:
     return load_yaml("video.yaml")
 
 
+def motion_config() -> dict[str, Any]:
+    return load_yaml("motion.yaml")
+
+
 def supported_languages() -> list[str]:
     env_value = os.getenv("SUPPORTED_LANGUAGES")
     if env_value:

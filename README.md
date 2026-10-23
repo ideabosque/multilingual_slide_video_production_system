@@ -3,7 +3,7 @@
 Five-agent pipeline that turns one clean English HTML slide deck into
 fully localized, narrated, captioned, publication-ready slideshow videos
 and (optionally) publishes them to YouTube — a Python CLI (`msv`) plus
-Claude Code skills/agents built on top of it, following the same overall
+agent skills in `.agents/skills/` built on top of it, following the same overall
 shape as its sibling
 [`multilingual_demo_video_production_system`](../multilingual_demo_video_production_system),
 but with an HTML/CSS deck instead of a screen recording as the input, and
@@ -17,18 +17,25 @@ English HTML Slide Deck → Agent 1 (analyze + translate slide text + localize n
                          → Agent 3 (YouTube metadata + publish) → Agent 4 (orchestrates all of it)
 ```
 
-| Role | Skill | Agent | Answers |
+| Role | Procedure skill | Orchestrator skill | Answers |
 |---|---|---|---|
-| Slide analysis & localization | `slide_deck_localization` | `.claude/agents/slide-analysis-agent.md` | What does each slide say, and what should its on-screen text, narration, captions, and the deck's marketing title say in each language? |
-| Voice & slideshow production | `slideshow_video_production` | `.claude/agents/slideshow-production-agent.md` | Given the translated slides and script, produce the actual narrated, captioned MP4 for one language. |
-| Multilingual rollout | `multilingual_rollout` | `.claude/agents/language-rollout-agent.md` | Once the default language is approved, fan Agent 2 out to every other language in one dispatch. |
-| YouTube publishing | `youtube_video_publishing` | `.claude/agents/youtube-publishing-agent.md` | Draft metadata and publish a finished video. |
-| **Orchestration** | `slide_video_orchestration` | `.claude/agents/pipeline-orchestrator-agent.md` | Run the whole thing end-to-end, resume after failure, report status. |
+| Slide analysis & localization | `slide_deck_localization` | `.agents/skills/slide_analysis/SKILL.md` | What does each slide say, and what should its on-screen text, narration, captions, and the deck's marketing title say in each language? |
+| Voice & slideshow production | `slideshow_video_production` | `.agents/skills/slideshow_production/SKILL.md` | Given the translated slides and script, produce the actual narrated, captioned MP4 for one language. |
+| Multilingual rollout | `multilingual_rollout` | `.agents/skills/language_rollout/SKILL.md` | Once the default language is approved, fan Agent 2 out to every other language in one dispatch. |
+| YouTube publishing | `youtube_video_publishing` | `.agents/skills/youtube_publishing/SKILL.md` | Draft metadata and publish a finished video. |
+| **Orchestration** | `slide_video_orchestration` | `.agents/skills/pipeline_orchestrator/SKILL.md` | Run the whole thing end-to-end, resume after failure, report status. |
 
-`pipeline-orchestrator-agent` (Agent 4) is the entry point for a full
-run — invoke it (or its skill) for "produce localized slideshow videos
-from this deck" requests rather than driving the other agents by hand.
-`slideshow-production-agent` and `language-rollout-agent` still work
+Each role has two skills. The **orchestrator skill** (formerly a Claude
+Code subagent in `.claude/agents/`) is the entry point: it holds the role,
+its guardrails and which other skill to dispatch next. The **procedure
+skill** holds the detailed steps it follows. Dispatching a skill means
+running it in a subagent when the host supports subagents, otherwise
+inline.
+
+`pipeline-orchestrator` (Agent 4) is the entry point for a full
+run — invoke it for "produce localized slideshow videos
+from this deck" requests rather than driving the other roles by hand.
+`slideshow-production` and `language-rollout` still work
 standalone for a targeted rerun (e.g. "just re-render the zh-TW
 slideshow") or a manual re-fan-out, the same as in the video-source
 sibling project.
@@ -246,11 +253,11 @@ correctly — cheaper than finding out via a failed upload.
 
 ## The `msv` CLI
 
-Four command groups (`slides`, `production`, `publishing`, `pipeline`) —
+Five command groups (`slides`, `production`, `motion`, `publishing`, `pipeline`) —
 every command prints one JSON object and exits 0/1 for success/failure.
-`language-rollout-agent` has no command group of its own: it's pure
+`language-rollout` has no command group of its own: it's pure
 orchestration built entirely on `msv pipeline status`/`next-actions` plus
-dispatching `slideshow-production-agent`, the same as Agent 4 does.
+dispatching `slideshow-production`, the same as Agent 4 does.
 
 ```bash
 msv slides extract-text --deck-dir <path> --out state/<run_id>/analysis/slides/manifest.json
@@ -258,18 +265,28 @@ msv slides render-images --deck-dir <path> --out <dir> [--viewport 1920x1080]
 msv slides apply-translations --deck-dir <original_deck_dir> --localization <localization_<lang>.json> --out <translated_<lang>_dir>
 msv slides validate --slide-analysis ... --localization ... --language ... [--manifest ...] [--project ...]
 msv slides generate-animation --deck-dir <original_deck_dir> --out state/<run_id>/analysis/slides/animation [--slide-analysis ...] [--spec ...]
+msv slides inspect-layout --deck-dir <deck_dir> --out layout_map.json [--annotate-dir ...]   # targets for motion design
+msv slides validate-motion --design motion_design.json --deck-dir <deck_dir> [--layout-map ...] [--production ...]
 
-msv production render-slideshow --run-id ... --project-id ... --language ... \
+# stage tts: narration + narration-driven timing + captions -> production.json (no video)
+msv production narrate --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> \
-    --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
     --localization state/<run_id>/analysis/localization_<language>.json \
-    --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
-msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
-msv production render-marketing-animation --production output/<run_id>/<language>/production.json \
+    --output-dir output/<run_id>/<language> [--audio-dir ...]
+# stage rendering: the animated video in one pass (engine/style from config/motion.yaml)
+msv production render-motion --production output/<run_id>/<language>/production.json \
     --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
     --animation-dir state/<run_id>/analysis/slides/animation \
-    --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
-    [--localization ...] [--output-name marketing_animation.mp4]
+    --localization state/<run_id>/analysis/localization_<language>.json \
+    [--engine remotion|hyperframes] [--motion-design motion_design.json] [--output-name video.mp4]
+msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
+# static fallback (explicit request, or motion engine unavailable)
+msv production render-slideshow --run-id ... --project-id ... --language ... \
+    --source-deck <original_deck_dir> --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
+    --localization ... --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
+
+msv motion install          # npm ci in motion/ (pinned HyperFrames + Remotion), then Remotion's browser
+msv motion doctor           # Node, ffmpeg, Chromium, per-engine availability, Remotion license reminder
 
 msv publishing validate --metadata ... --language ... [--video ...]
 msv publishing upload --run-id ... --project-id ... --language ... --video ... --metadata ... --output-dir ... [--existing-video-id ...]
@@ -282,34 +299,58 @@ msv pipeline next-actions / status / set-stage / rerun-language / rerun-stage /
 
 `msv slides` has no "run it end-to-end" command by design — reading the
 deck and writing slide descriptions/narration/translations is Claude's
-job (see `.claude/skills/slide_deck_localization/SKILL.md`), not a
+job (see `.agents/skills/slide_deck_localization/SKILL.md`), not a
 deterministic script; the CLI only provides the extraction/rendering/
 validation tooling around that step.
 
-`generate-animation`/`render-marketing-animation` produce an optional,
-untracked side artifact (`marketing_animation.mp4`) — a GSAP-animated
-motion-graphics rebuild of an already-produced language, never a
-replacement for `slideshow.mp4` and never part of the tracked pipeline
-stages. Each slide gets one of eight shot templates — `title_reveal`,
-`feature_callout`, `stat_highlight` (real number count-up), `diagram_build`
-(staggered per-card reveal), `closing`, `quote_testimonial`,
-`comparison_versus`, `timeline_roadmap` — picked by a deterministic
-heuristic (position + keyword match on the slide's description), or by an
-optional `visual_role` field Agent 1 can assign per slide in
-`slide_analysis.json` (takes priority over the heuristic when present).
-Both are a fixed template library, not agent-generated code per deck —
-the templates themselves are declarative data in
-`config/animation_templates.yaml` (which role, which effect, what
-timing/order), played by a small generic engine + three reusable effect
-primitives (`reveal`/`accent_line`/`count_up`) in `animation_runtime.js`;
-adding or tuning a template is normally a YAML edit, not a JS change. See
-`docs/marketing-animation-pipeline-plan.md` §4.1 for why,
-and `.claude/skills/gsap_animation_authoring/SKILL.md` /
-`.claude/skills/motion_design_principles/SKILL.md` for the "how"/"which
-template" guidance that applies only when someone extends the library
-itself, not on a normal render. See
-`.claude/skills/slideshow_video_production/SKILL.md`'s "Optional alternate
-output" for the full command sequence.
+**Production is animation-first.** Each language's video is rendered in
+one pass: `narrate` (TTS and the narration-driven timing), then
+`render-motion`, which renders the translated deck as an animated video
+with Remotion (frame-exact) in the **playful** motion style - springy
+pop-ins, word-by-word headlines, count-ups, cards popping in across the
+narration, a slow camera push-in, and a quick fade before each cut. The
+review gates are unchanged: the default language is reviewed before the
+other languages render, and nothing is published without approval.
+
+Each slide gets one of eight shot templates (`title_reveal`,
+`feature_callout`, `stat_highlight`, `diagram_build`, `closing`,
+`quote_testimonial`, `comparison_versus`, `timeline_roadmap`), picked by
+`msv slides generate-animation` from an optional `visual_role` Agent 1
+assigns per slide in `slide_analysis.json`, otherwise a deterministic
+position + keyword heuristic. The templates are declarative data, one file
+per motion style (`config/animation_templates.yaml` = calm,
+`config/animation_templates_playful.yaml` = playful), played by a small
+generic engine in `slides/assets/animation_runtime.js` built on GSAP.
+Adding or tuning a template is a YAML edit. See
+`docs/motion-engines-and-hardening-plan.md` (Part D) for the design, and
+`.agents/skills/slideshow_video_production/SKILL.md` for the full command
+sequence.
+
+**Two engines, one animation.** `--engine remotion` (the default) and
+`--engine hyperframes` both render the translated deck itself and seek the same
+per-slide GSAP timelines frame by frame, so they cut, animate and
+transition every slide on the same frames. They differ in fonts:
+HyperFrames swaps system fonts (Georgia, Arial, generic `sans-serif`) for
+its own bundled ones and looks up other font names on Google Fonts while
+rendering; Remotion renders the deck's fonts as the browser does. Remotion
+is free for individuals and companies of up to 3 people; larger companies
+need a Remotion company license (`msv motion doctor` prints a reminder).
+
+**Per-deck motion designs.** Instead of one template per slide, a deck can
+have a `motion_design.json` (schema `motion-design/v1`): which elements
+move, in what order and at which point in the narration, with effects such
+as word-by-word or line-by-line text, SVG line drawing, highlights,
+arrows between boxes, camera moves, and crossfade/push/wipe transitions
+between slides. The eight templates are its presets. Pass it with
+`render-motion --motion-design`. `msv slides inspect-layout` maps what
+can be targeted on each slide, with numbered screenshots, and
+`msv slides validate-motion` checks a design against the deck and against
+comfort rules (no more than 3 flashes per second, at most 6 elements moving
+at once, time left to read). At render time a slide whose design fails in
+one language plays its preset there, with a warning naming it.
+`docs/examples/motion_design.food-manufacturing.json` is a worked example.
+Claude writing these designs itself, with an approval gate, is the plan's
+Phase 6.
 
 ## Architecture
 
@@ -336,12 +377,13 @@ output" for the full command sequence.
               ┌──────────────────┐
               │     AGENT 2      │  slideshow_video_production
               │ HTML TRANSLATE + │  default_language ONLY, first —
-              │ CHROMIUM RENDER +│  slideshow.mp4/narration.mp3/captions.srt/
-              │  OPENAI TTS +    │  production.json. Each slide's on-screen
-              │  FFMPEG ASSEMBLY │  duration is its own narration length plus
-              │                  │  a short pause - no pre-existing timeline
-              │                  │  to anchor against or overrun; captions
-              │                  │  auto-wrap; a title card leads the video.
+              │  OPENAI TTS +    │  narrate (tts), then one-pass animated
+              │ HYPERFRAMES      │  render (rendering): video.mp4/narration.mp3/
+              │ ANIMATED RENDER  │  captions.srt/production.json. Each slide's
+              │                  │  on-screen duration is its own narration
+              │                  │  length plus a short pause; playful motion
+              │                  │  plays against it; captions auto-wrap; an
+              │                  │  animated title card leads the video.
               └────────┬─────────┘
                        ▼
                  HUMAN REVIEW
@@ -410,10 +452,11 @@ project-wide setup and configuration.
 ## Directory layout
 
 ```
-.claude/
-  agents/          # 5 subagent definitions (Task-tool invocable)
-  skills/          # 7 SKILL.md files: one per agent, plus gsap_animation_authoring
-                    # and motion_design_principles (animation authoring guidance)
+.agents/
+  skills/          # 12 SKILL.md files: 5 orchestrator skills (pipeline_orchestrator,
+                    # language_rollout, slide_analysis, slideshow_production,
+                    # youtube_publishing), the 5 procedure skills they follow, plus
+                    # gsap_animation_authoring and motion_design_principles
 src/multilingual_slide_video_agent/
   config.py        # .env + config/*.yaml + cwd-relative dir resolution
   state.py          # PipelineState — resume/retry backbone
@@ -426,8 +469,9 @@ src/multilingual_slide_video_agent/
                       # (GSAP animation bundle generation — see docs/marketing-animation-pipeline-plan.md)
     assets/            # animation_runtime.js (the actual GSAP timelines)
     vendor/            # vendored gsap.min.js (see its GSAP_LICENSE.txt)
-  production/         # TTS + slideshow assembly (captions/title-card styling)
-                      # + render_marketing_animation.py (optional GSAP-animated side artifact)
+  production/         # render_slideshow.py: narration (narrate_language) + static fallback
+                      # motion/: animated rendering - HyperFrames engine, exact-frame assembly,
+                      # shared caption+narration post-pass, validation
   publishing/         # YouTube upload (same shape as the video-source project)
   cli.py            # the `msv` command groups
 config/            # languages.yaml, terminology.yaml, video.yaml, design_system.yaml,
@@ -488,7 +532,7 @@ Only `DEFAULT_LANGUAGE` (or `--default-language` at `msv pipeline init`)
 gets rendered first. Every other language's `translation` stage is held
 until that render is reviewed and `msv pipeline approve-production --run-id ...`
 is called (or `PIPELINE_AUTO_APPROVE_PRODUCTION=true` is set) — at which
-point `language-rollout-agent` fans out to everyone else in one dispatch.
+point `language-rollout` fans out to everyone else in one dispatch.
 Rerunning the default language (`rerun_language --language <default>`)
 re-locks the gate automatically, since whatever was approved no longer
 exists. See `slide_video_orchestration/SKILL.md` for the full mechanics.
@@ -505,16 +549,16 @@ Requires YouTube credentials to actually be configured first — see
 
 ## Example prompts
 
-This project is meant to be operated by talking to the agents in Claude
-Code, not by typing raw `msv` commands yourself — the agents run the CLI
-for you and report back. Naming the agent explicitly (as in every example
-below) is the reliable way to get the right one; each also has a
-`description` in `.claude/agents/` tuned for Claude Code to pick up on
-intent alone, but an explicit name removes any ambiguity, especially once
-several runs exist at once.
+This project is meant to be operated by talking to a coding agent, not by
+typing raw `msv` commands yourself: the orchestrator skills run the CLI for
+you and report back. Naming the skill explicitly (as in every example
+below) is the reliable way to get the right one. Each also has a
+`description` in its `.agents/skills/<name>/SKILL.md` frontmatter tuned for
+an agent to pick up on intent alone, but an explicit name removes any
+ambiguity, especially once several runs exist at once.
 
 **Start a full run on a new deck:**
-> "Utilize pipeline-orchestrator-agent with the skill slide_video_orchestration for the deck C:\path\to\your-deck\."
+> "Use the pipeline-orchestrator skill for the deck C:\path\to\your-deck\."
 
 > "Produce localized slideshow videos from C:\Users\you\Documents\product-launch-deck\."
 
@@ -529,7 +573,7 @@ its own — see above.
 **Approve the default-language render, releasing every other language:**
 > "Approved. Please move on to the next step."
 
-> "Please dispatch pipeline-orchestrator-agent to roll out the other languages for run-20260818-001."
+> "Please dispatch pipeline-orchestrator to roll out the other languages for run-20260818-001."
 
 This is a real conversational gate (see "Default-language-first production
 gate" above) — the orchestrator will not proceed to the other languages
@@ -547,12 +591,12 @@ not permission — nothing gets uploaded until you say so explicitly.
 **Rerun one language or one stage after a fix:**
 > "Rerun the zh-TW language for run-20260818-001 from analysis onward — the narration was too verbose."
 
-> "Re-render just the fr-FR video for run-20260818-001 with slideshow-production-agent; the rest can stay as they are."
+> "Re-render just the fr-FR video for run-20260818-001 with slideshow-production; the rest can stay as they are."
 
-**Invoke a single agent directly, outside the full pipeline:**
-> "Use agent slide-analysis-agent with its skill for the deck at C:\path\to\deck\."
+**Run a single role directly, outside the full pipeline:**
+> "Use the slide-analysis skill for the deck at C:\path\to\deck\."
 
-> "Dispatch slideshow-production-agent to re-render the ja-JP video for run-20260818-001."
+> "Dispatch slideshow-production to re-render the ja-JP video for run-20260818-001."
 
 **Add a language to every future run:**
 > "Add ko-KR to config/languages.yaml with a natural TTS voice profile, then include it in SUPPORTED_LANGUAGES."

@@ -73,6 +73,21 @@ def _iter_text_nodes(soup: BeautifulSoup):
         yield node
 
 
+def tag_text_nodes(soup: BeautifulSoup, slide_id: str) -> int:
+    """Mark each text node's element with the node ids it holds, as a
+    space-separated `data-motion-node` list (one element can hold several
+    text nodes). The engines do this on their copy of a slide, so a motion
+    design can target `{"node": "slide_004#n7"}` - the same ids, from the
+    same traversal, that translations use. Returns the number of nodes."""
+    count = 0
+    for i, node in enumerate(_iter_text_nodes(soup)):
+        parent = node.parent
+        existing = parent.get("data-motion-node")
+        parent["data-motion-node"] = f"{existing} {slide_id}#n{i}" if existing else f"{slide_id}#n{i}"
+        count += 1
+    return count
+
+
 def extract_slide_text(slide_path: Path, slide_index: int) -> dict[str, Any]:
     slide_id = slide_path.stem
     html = slide_path.read_text(encoding="utf-8")

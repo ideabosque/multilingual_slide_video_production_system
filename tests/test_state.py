@@ -46,7 +46,7 @@ def test_publishing_held_until_auto_publish_or_approval(isolated_state_dir, sour
         run_id="run-test-003", project_id="proj", source_deck=str(source_deck),
         language_codes=["en-US"], auto_publish=False,
     )
-    for stage in ["analysis", "translation", "rendering", "tts", "validation"]:
+    for stage in ["analysis", "translation", "tts", "rendering", "validation"]:
         state.set_stage("en-US", stage, "completed")
 
     assert state.next_actions() == []
@@ -66,7 +66,7 @@ def test_invalidate_from_resets_only_downstream_stages(isolated_state_dir, sourc
     assert state.language_status("en-US") == "completed"
 
     reset = state.invalidate_from("en-US", "translation")
-    assert reset == ["translation", "rendering", "tts", "validation", "publishing"]
+    assert reset == ["translation", "tts", "rendering", "validation", "publishing"]
     assert state.get_stage("en-US", "analysis")["status"] == "completed"
     assert state.get_stage("en-US", "translation")["status"] == "pending"
 
@@ -95,7 +95,7 @@ def test_non_default_languages_held_until_production_approved(isolated_state_dir
     assert actions == [{"language": "en-US", "stage": "translation"}]
     assert state.language_status("zh-TW") == "blocked_pending_production_approval"
 
-    for stage in ["translation", "rendering", "tts", "validation"]:
+    for stage in ["translation", "tts", "rendering", "validation"]:
         state.set_stage("en-US", stage, "completed")
 
     # Default language done, but the gate isn't open yet without approval.
@@ -117,7 +117,7 @@ def test_auto_approve_production_skips_the_gate(isolated_state_dir, source_deck)
     )
     for lang in state.languages:
         state.set_stage(lang, "analysis", "completed")
-    for stage in ["translation", "rendering", "tts", "validation"]:
+    for stage in ["translation", "tts", "rendering", "validation"]:
         state.set_stage("en-US", stage, "completed")
 
     assert {"language": "zh-TW", "stage": "translation"} in state.next_actions()
@@ -130,7 +130,7 @@ def test_rerunning_default_language_relocks_production_gate(isolated_state_dir, 
     )
     for lang in state.languages:
         state.set_stage(lang, "analysis", "completed")
-    for stage in ["translation", "rendering", "tts", "validation"]:
+    for stage in ["translation", "tts", "rendering", "validation"]:
         state.set_stage("en-US", stage, "completed")
     state.approve_production()
     assert state.production_approved is True

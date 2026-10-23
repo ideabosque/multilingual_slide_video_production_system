@@ -25,6 +25,7 @@ languages:
     name: Traditional Chinese (Taiwan)
     voice: marin
     caption_font: "Noto Sans CJK TC"
+    inline_word_spacing: false   # no spaces between words - see apply_translations.py
     tts_instructions: |
       請使用自然的台灣中文（繁體中文）口吻。這是一段專業簡報的旁白。
       語氣自然、親切、有自信，但不要像新聞主播或廣告配音。
@@ -35,6 +36,7 @@ languages:
     name: Japanese
     voice: marin
     caption_font: "Noto Sans CJK JP"
+    inline_word_spacing: false   # no spaces between words - see apply_translations.py
     tts_instructions: |
       Speak in natural Japanese for a professional slide presentation. Be
       conversational and confident with natural pauses. Preserve
@@ -97,6 +99,7 @@ languages:
     name: Simplified Chinese
     voice: marin
     caption_font: "Noto Sans CJK SC"
+    inline_word_spacing: false   # no spaces between words - see apply_translations.py
     tts_instructions: |
       请使用自然的普通话（简体中文）语气。这是一段专业幻灯片演示的旁白。
       语气自然、亲切、自信，但不要像新闻主播或广告配音。

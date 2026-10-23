@@ -156,6 +156,87 @@ def slides_generate_animation(deck_dir: str, out: str, slide_analysis: str | Non
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
+
+@slides.command("extract-roles")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The translated deck to read roles from (msv slides apply-translations output)")
+@click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output), for spec.json's per-slide template")
+@click.option("--out", required=True, type=click.Path(), help="Where to write roles_<language>.json (convention: the run's analysis/slides/animation/ directory)")
+@click.option("--viewport", default="1920x1080", show_default=True)
+def slides_extract_roles(deck_dir: str, animation_dir: str, out: str, viewport: str) -> None:
+    "Extract each translated slide's resolved animation roles into roles_<language>.json (plan B3 #2)."
+    from multilingual_slide_video_agent.slides.extract_roles import ExtractRolesError, extract_deck_roles
+
+    try:
+        manifest = extract_deck_roles(
+            translated_deck_dir=deck_dir, animation_dir=animation_dir, out_path=out, viewport=viewport,
+        )
+    except ExtractRolesError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    manifest["ok"] = True
+    click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+
+@slides.command("inspect-layout")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck to map: the original deck when designing motion, a translated deck to check one language")
+@click.option("--out", required=True, type=click.Path(), help="Where to write layout_map.json (convention: the run's analysis/slides/animation/)")
+@click.option("--annotate-dir", type=click.Path(file_okay=False), help="Also save each slide's screenshot with numbered boxes on its targetable elements")
+@click.option("--viewport", default="1920x1080", show_default=True)
+def slides_inspect_layout(deck_dir: str, out: str, annotate_dir: str | None, viewport: str) -> None:
+    "Map each slide's targetable elements for motion design: node ids, boxes, repeated groups, SVG shapes, roles (plan C4)."
+    from multilingual_slide_video_agent.slides.layout_map import LayoutMapError, inspect_layout
+
+    try:
+        layout = inspect_layout(deck_dir=deck_dir, out_path=out, annotate_dir=annotate_dir, viewport=viewport)
+    except LayoutMapError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    _echo_result({
+        "ok": True, "out": str(Path(out).resolve()), "deck_fingerprint": layout["deck_fingerprint"],
+        "slides": [{"slide_id": s["slide_id"], "elements": len(s["elements"]), "groups": len(s["groups"]),
+                    "svg_shapes": len(s["svg_shapes"]), **({"annotated_image": s["annotated_image"]}
+                                                           if "annotated_image" in s else {})}
+                   for s in layout["slides"]],
+    })
+
+
+@slides.command("validate-motion")
+@click.option("--design", "design_path", required=True, type=click.Path(exists=True), help="The deck's motion_design.json (motion-design/v1)")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck the design targets: the original deck, or a translated deck to check one language")
+@click.option("--layout-map", "layout_map_path", type=click.Path(exists=True), help="layout_map.json from msv slides inspect-layout, to check role targets")
+@click.option("--production", "production_paths", multiple=True, type=click.Path(exists=True), help="A narrated language's production.json, for slide durations (repeatable; the shortest wins). Without one, timing and comfort checks are skipped")
+@click.option("--source-deck", type=click.Path(exists=True, file_okay=False), help="The original deck, whose fingerprint the design must carry (defaults to --deck-dir)")
+def slides_validate_motion(design_path: str, deck_dir: str, layout_map_path: str | None,
+                           production_paths: tuple[str, ...], source_deck: str | None) -> None:
+    "Check a motion design before rendering: schema, targets, brand, comfort and timing guardrails (plan C5). Problems name the slide and step."
+    from multilingual_slide_video_agent.production.motion.clips import duration_tokens
+    from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+    from multilingual_slide_video_agent.slides.design_system import load_design_system
+    from multilingual_slide_video_agent.slides.motion_checks import (
+        brand_color_tokens, check_motion_design, slide_durations_from_productions,
+    )
+    from multilingual_slide_video_agent.state import directory_fingerprint
+
+    try:
+        doc = json.loads(Path(design_path).read_text(encoding="utf-8"))
+    except ValueError as e:
+        _echo_result({"ok": False, "errors": [f"can't read {design_path}: {e}"]})
+        return
+    layout = json.loads(Path(layout_map_path).read_text(encoding="utf-8")) if layout_map_path else None
+    productions = [json.loads(Path(p).read_text(encoding="utf-8")) for p in production_paths]
+    tokens = load_design_system()
+    style = str(cfg.motion_config().get("animation_style", "calm"))
+    result = check_motion_design(
+        doc, deck_dir=deck_dir, presets=set(load_template_config(style)), tokens=duration_tokens(tokens),
+        brand_colors=brand_color_tokens(tokens), layout_map=layout,
+        slide_durations=slide_durations_from_productions(productions) or None,
+        source_fingerprint=directory_fingerprint(source_deck or deck_dir),
+    )
+    errors = result["errors"] + [e for errs in result["slide_errors"].values() for e in errs]
+    _echo_result({"ok": result["ok"], "errors": errors, "failing_slides": sorted(result["slide_errors"]),
+                  "warnings": result["warnings"], "design": str(Path(design_path).resolve())})
+
+
 # ---------------------------------------------------------------------------
 # msv production ... (Agent 2)
 # ---------------------------------------------------------------------------
@@ -163,6 +244,33 @@ def slides_generate_animation(deck_dir: str, out: str, slide_analysis: str | Non
 @main.group()
 def production() -> None:
     """Agent 2: voice & slideshow production tools."""
+
+
+@production.command("narrate")
+@click.option("--run-id", required=True)
+@click.option("--project-id", required=True)
+@click.option("--language", required=True)
+@click.option("--source-deck", required=True, type=click.Path(exists=True, file_okay=False), help="The original clean deck, for the source_deck_fingerprint idempotency check")
+@click.option("--localization", required=True, type=click.Path(exists=True), help="Agent 1's localization_<language>.json")
+@click.option("--output-dir", required=True, type=click.Path())
+@click.option("--audio-dir", type=click.Path(), help="Reuse pre-generated per-slide mp3s named <slide_id>.mp3")
+def production_narrate(
+    run_id: str, project_id: str, language: str, source_deck: str, localization: str,
+    output_dir: str, audio_dir: str | None,
+) -> None:
+    """The `tts` stage: narrate one language (TTS, narration-driven slide timing, captions) into production.json, with no video. render-motion renders the animated video next."""
+    from multilingual_slide_video_agent.production.render_slideshow import ProductionError, narrate_language
+
+    try:
+        envelope = narrate_language(
+            run_id=run_id, project_id=project_id, language=language, source_deck=source_deck,
+            localization_path=localization, output_dir=output_dir, audio_dir=audio_dir,
+        )
+    except ProductionError as e:
+        _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
+        return
+    envelope["ok"] = envelope.get("status") == "completed"
+    _echo_result(envelope)
 
 
 @production.command("render-slideshow")
@@ -206,36 +314,150 @@ def production_validate(production_path: str, localization: str | None, run_id: 
     _echo_result(validate_production(production_path=production_path, localization_path=localization, run_id=run_id))
 
 
-@production.command("render-marketing-animation")
-@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="An already-rendered language's production.json (msv production render-slideshow output)")
+@production.command("render-motion")
+@click.option("--engine", type=click.Choice(["hyperframes", "remotion"]), help="Defaults to config/motion.yaml's default_engine")
+@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="A narrated language's production.json (msv production narrate output)")
 @click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's translated HTML deck (msv slides apply-translations output)")
 @click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck's generated animation bundle (msv slides generate-animation output)")
-@click.option("--slides-dir", required=True, type=click.Path(exists=True, file_okay=False), help="This language's rendered slide images, for the title card background (msv slides render-images output)")
+@click.option("--slides-dir", type=click.Path(exists=True, file_okay=False), help="Rendered slide images (msv slides render-images). Optional; the HyperFrames engine does not need them")
 @click.option("--localization", type=click.Path(exists=True), help="Agent 1's localization_<language>.json, for caption text")
+@click.option("--roles", "roles_path", type=click.Path(exists=True), help="roles_<language>.json from msv slides extract-roles (optional; recorded per slide in the render context)")
+@click.option("--motion-design", "motion_design_path", type=click.Path(exists=True), help="The deck's motion_design.json (motion-design/v1), played instead of each slide's template. Validated before rendering")
 @click.option("--output-dir", type=click.Path(), help="Defaults to the production.json directory")
-@click.option("--output-name", default="marketing_animation.mp4", show_default=True)
+@click.option("--output-name", help="Defaults to video.mp4")
 @click.option("--viewport", default="1920x1080", show_default=True)
-def production_render_marketing_animation(
-    production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str,
-    localization: str | None, output_dir: str | None, output_name: str, viewport: str,
+def production_render_motion(
+    engine: str | None, production_path: str, translated_deck_dir: str, animation_dir: str, slides_dir: str | None,
+    localization: str | None, roles_path: str | None, motion_design_path: str | None, output_dir: str | None,
+    output_name: str | None, viewport: str,
 ) -> None:
-    """Rebuild an already-rendered language as a GSAP-animated marketing MP4 (marketing_animation_pipeline_plan §4)."""
-    from multilingual_slide_video_agent.production.render_marketing_animation import (
-        MarketingAnimationError,
-        render_marketing_animation,
-    )
+    """The `rendering` stage: render a narrated language (msv production narrate) as its animated video with a motion engine, and record it in production.json. Writes <output>.mp4 plus <output>.motion.json."""
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.production.motion.render import render_motion
 
     try:
-        envelope = render_marketing_animation(
+        envelope = render_motion(
             production_path=production_path, translated_deck_dir=translated_deck_dir,
             animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization,
-            output_dir=output_dir, output_name=output_name, viewport=viewport,
+            roles_path=roles_path, output_dir=output_dir, output_name=output_name,
+            engine_name=engine, viewport=viewport, motion_design_path=motion_design_path,
         )
-    except MarketingAnimationError as e:
+    except MotionError as e:
         _echo_result({"agent": "slideshow_production_agent", "status": "failed", "ok": False, "errors": [str(e)]})
         return
     envelope["ok"] = envelope.get("status") == "completed"
     _echo_result(envelope)
+
+
+
+# ---------------------------------------------------------------------------
+# msv motion ... (Agent 2; Part B of motion-engines-and-hardening-plan)
+# ---------------------------------------------------------------------------
+
+@main.group()
+def motion() -> None:
+    "The Node toolchain behind the HyperFrames/Remotion engines (plan B3 #3). A missing toolchain only disables the two Node engines; the Python-only path never needs it."
+
+
+@motion.command("install")
+def motion_install() -> None:
+    "Run npm ci in motion/ - a pinned install from the committed package-lock.json (never a bare install, never npx at render time, plan B3 #3)."
+    import shutil
+    import subprocess
+
+    motion_dir = cfg.root_dir() / "motion"
+    if not (motion_dir / "package.json").exists():
+        _echo_result({"ok": True, "installed": False, "message": "no motion/package.json scaffold yet (plan phases 2a/2b add it); nothing to install"})
+        return
+    if not (motion_dir / "package-lock.json").exists():
+        # `npm ci` refuses to run without a lockfile, and installing without
+        # one would defeat the pinning this command exists for.
+        _echo_result({"ok": False, "errors": [
+            "motion/package-lock.json is missing - run `npm install --package-lock-only` in motion/ "
+            "and commit the lockfile (plan B3 #3: pinned installs only)"
+        ]})
+        return
+    npm = shutil.which("npm")
+    if not npm:
+        _echo_result({"ok": False, "errors": ["npm not on PATH - install Node 22+ first (see msv motion doctor)"]})
+        return
+    try:
+        subprocess.run([npm, "ci", "--prefix", str(motion_dir)], check=True, capture_output=True, text=True)
+    except OSError as e:
+        _echo_result({"ok": False, "errors": [f"npm ci failed: {e}"]})
+        return
+    except subprocess.SubprocessError as e:
+        stderr = (getattr(e, "stderr", "") or str(e))[-2000:]
+        _echo_result({"ok": False, "errors": [f"npm ci failed: {stderr}"]})
+        return
+    # Remotion renders with its own pinned chrome-headless-shell. Download it
+    # now, so a render never fetches anything (plan B3 #3).
+    ensure = motion_dir / "remotion" / "ensure-browser.mjs"
+    browser = None
+    if ensure.exists():
+        result = subprocess.run([shutil.which("node") or "node", str(ensure)], cwd=motion_dir,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            _echo_result({"ok": False, "errors": [
+                f"Remotion's browser download failed: {(result.stdout + result.stderr)[-2000:]}"
+            ]})
+            return
+        browser = json.loads(result.stdout.strip().splitlines()[-1]).get("status", {}).get("path")
+    _echo_result({
+        "ok": True, "installed": True,
+        "from_lockfile": (motion_dir / "package-lock.json").exists(),
+        "motion_dir": str(motion_dir),
+        "remotion_browser": browser,
+    })
+
+
+@motion.command("doctor")
+def motion_doctor() -> None:
+    "Environment check for motion rendering (plan B3 #3): Node, ffmpeg, Chromium, each engine's availability, plus the Remotion license reminder (B5)."
+    import shutil
+    import subprocess as sp
+
+    from multilingual_slide_video_agent.production.motion import render as motion_render
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.slides.render import chromium_available
+
+    node_path = shutil.which("node")
+    node_version = None
+    if node_path:
+        try:
+            node_version = sp.run([node_path, "--version"], capture_output=True, text=True, check=True).stdout.strip()
+        except Exception:
+            node_version = "unknown"
+    node_major = int(node_version.lstrip("v").split(".")[0]) if node_version and node_version.lstrip("v").split(".")[0].isdigit() else None
+
+    engines = {}
+    for name in motion_render.KNOWN_ENGINE_NAMES:
+        try:
+            engine = motion_render.get_engine(name)
+            missing = engine.check_available()
+        except MotionError as e:
+            engines[name] = {"available": False, "missing": [str(e)]}
+            continue
+        engines[name] = {"available": not missing, "missing": missing}
+
+    _echo_result({
+        "ok": True,
+        "checks": {
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "ffprobe": bool(shutil.which("ffprobe")),
+            "node": {
+                "present": bool(node_path), "version": node_version,
+                "meets_hyperframes_min": node_major is not None and node_major >= 22,
+            },
+            "playwright_chromium": chromium_available(),
+        },
+        "engines": engines,
+        "remotion_license_reminder": (
+            "Remotion's free tier covers individuals and companies of <=3 people; re-check on headcount "
+            "growth, any automated-service offering, or a Remotion 5.x upgrade (plan B5). It is the "
+            "default engine by the user's decision of 2026-10-22 (D1); --engine hyperframes avoids it."
+        ),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -427,14 +649,14 @@ def pipeline_set_stage(
     """Record one stage's outcome."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
     artifacts = {}
     for pair in artifact:
         key, _, value = pair.partition("=")
         artifacts[key] = value
-    state.set_stage(language, stage, stage_status, artifacts=artifacts or None, error=error, increment_retry=retry)
-    if youtube_video_id:
-        state.set_youtube_result(language, youtube_video_id, youtube_url or "")
+    with PipelineState.transaction(run_id) as state:
+        state.set_stage(language, stage, stage_status, artifacts=artifacts or None, error=error, increment_retry=retry)
+        if youtube_video_id:
+            state.set_youtube_result(language, youtube_video_id, youtube_url or "")
 
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
@@ -454,11 +676,11 @@ def pipeline_rerun_language(run_id: str, language: str, from_stage: str | None) 
     """Reset one language from a given stage onward, then resume."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    if language not in state.languages:
-        _echo_result({"ok": False, "errors": [f"language '{language}' is not part of run '{run_id}'"]})
-        return
-    reset = state.invalidate_from(language, from_stage or "analysis")
+    with PipelineState.transaction(run_id) as state:
+        if language not in state.languages:
+            _echo_result({"ok": False, "errors": [f"language '{language}' is not part of run '{run_id}'"]})
+            return
+        reset = state.invalidate_from(language, from_stage or "analysis")
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         language=language, event="language_rerun_requested", status="completed", reset_stages=reset,
@@ -475,13 +697,13 @@ def pipeline_rerun_stage(run_id: str, stage: str, language: str | None) -> None:
     """Reset one stage, for one language or all languages, then resume."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    language_list = [language] if language else list(state.languages.keys())
-    results = {}
-    for lang in language_list:
-        if lang not in state.languages:
-            continue
-        results[lang] = state.invalidate_from(lang, stage)
+    with PipelineState.transaction(run_id) as state:
+        language_list = [language] if language else list(state.languages.keys())
+        results = {}
+        for lang in language_list:
+            if lang not in state.languages:
+                continue
+            results[lang] = state.invalidate_from(lang, stage)
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         stage=stage, event="stage_rerun_requested", status="completed", languages=language_list,
@@ -499,18 +721,18 @@ def pipeline_approve_production(run_id: str) -> None:
     hasn't finished validation yet - there's nothing to have reviewed."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    default_status = state.language_status(state.default_language)
-    if default_status not in {"ready_for_review", "completed"}:
-        _echo_result({
-            "ok": False,
-            "errors": [
-                f"default language '{state.default_language}' has status '{default_status}', not yet "
-                "ready_for_review/completed - nothing to approve yet"
-            ],
-        })
-        return
-    state.approve_production()
+    with PipelineState.transaction(run_id) as state:
+        default_status = state.language_status(state.default_language)
+        if default_status not in {"ready_for_review", "completed"}:
+            _echo_result({
+                "ok": False,
+                "errors": [
+                    f"default language '{state.default_language}' has status '{default_status}', not yet "
+                    "ready_for_review/completed - nothing to approve yet"
+                ],
+            })
+            return
+        state.approve_production()
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         event="production_approved", status="completed", language=state.default_language,
@@ -526,17 +748,17 @@ def pipeline_approve_publish(run_id: str, languages: str | None) -> None:
     """Human sign-off releasing held publishing stages (publish_pending)."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
 
-    state = PipelineState.load(run_id)
-    language_list = [lang.strip() for lang in languages.split(",")] if languages else list(state.languages.keys())
-    approved, blocked = [], []
-    for lang in language_list:
-        if lang not in state.languages:
-            continue
-        if state.language_status(lang) not in {"ready_for_review", "completed"}:
-            blocked.append(lang)
-            continue
-        state.approve_publish(lang)
-        approved.append(lang)
+    with PipelineState.transaction(run_id) as state:
+        language_list = [lang.strip() for lang in languages.split(",")] if languages else list(state.languages.keys())
+        approved, blocked = [], []
+        for lang in language_list:
+            if lang not in state.languages:
+                continue
+            if state.language_status(lang) not in {"ready_for_review", "completed"}:
+                blocked.append(lang)
+                continue
+            state.approve_publish(lang)
+            approved.append(lang)
     RunLogger(run_id, state.project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
         event="publish_approved", status="completed", languages=approved,
@@ -549,7 +771,7 @@ def pipeline_approve_publish(run_id: str, languages: str | None) -> None:
 @handle_errors
 def pipeline_validate(run_id: str) -> None:
     """validate_pipeline: consistency checks over run state."""
-    from multilingual_slide_video_agent.state import directory_fingerprint
+    from multilingual_slide_video_agent.state import FINGERPRINT_ALGO, directory_fingerprint, fingerprints_comparable
     from pathlib import Path as _Path
 
     state = PipelineState.load(run_id)
@@ -561,7 +783,12 @@ def pipeline_validate(run_id: str) -> None:
         errors.append(f"registered source deck no longer exists: {source}")
     else:
         current_fp = directory_fingerprint(source)
-        if current_fp != state.source_deck_fingerprint:
+        if not fingerprints_comparable(state.source_deck_fingerprint_algo, FINGERPRINT_ALGO):
+            warnings.append(
+                "run was created with the legacy mtime-based deck fingerprint, which can't be compared "
+                "with the current content fingerprint - start a new run to get source-change detection"
+            )
+        elif current_fp != state.source_deck_fingerprint:
             warnings.append(
                 "source deck content has changed since this run started "
                 f"(was {state.source_deck_fingerprint}, now {current_fp}) — "

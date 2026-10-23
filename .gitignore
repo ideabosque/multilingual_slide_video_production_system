@@ -238,3 +238,5 @@ logs/*
 .DS_Store
 Thumbs.db
 worktrees
+# Node toolchain for the motion engines (installed by `msv motion install`)
+motion/node_modules/

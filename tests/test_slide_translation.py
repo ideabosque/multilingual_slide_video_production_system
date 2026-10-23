@@ -110,3 +110,38 @@ def test_apply_translations_fails_loudly_on_unknown_node_id(deck_dir, tmp_path):
 
     with pytest.raises(ApplyTranslationsError):
         apply_translations(deck_dir=deck_dir, localization_path=localization_path, out_dir=tmp_path / "out")
+
+
+def _apply_inline_deck(tmp_path, language, translations):
+    deck = tmp_path / "inline_deck"
+    deck.mkdir()
+    (deck / "slide_001.html").write_text(
+        "<html><body><p>Fast <b>and</b> simple</p></body></html>", encoding="utf-8",
+    )
+    manifest = extract_deck_text(deck, tmp_path / "inline_manifest.json")
+    assert [n["text"] for n in manifest["slides"][0]["nodes"]] == ["Fast", "and", "simple"]
+    localization = {
+        "language": language, "run_id": "r1", "title": "t",
+        "segments": [{
+            "slide_index": 1, "slide_id": "slide_001", "slide_description": "d",
+            "narration": "...", "caption": "...",
+            "slide_translations": [
+                {"node_id": f"slide_001#n{i}", "text": text} for i, text in enumerate(translations)
+            ],
+        }],
+    }
+    localization_path = tmp_path / f"localization_{language}.json"
+    localization_path.write_text(json.dumps(localization, ensure_ascii=False), encoding="utf-8")
+    out_dir = tmp_path / f"translated_{language}"
+    apply_translations(deck_dir=deck, localization_path=localization_path, out_dir=out_dir)
+    return (out_dir / "slide_001.html").read_text(encoding="utf-8")
+
+
+def test_apply_translations_keeps_spaces_around_inline_elements(tmp_path):
+    html = _apply_inline_deck(tmp_path, "fr-FR", ["Rapide", "et", "simple"])
+    assert "<p>Rapide <b>et</b> simple</p>" in html
+
+
+def test_apply_translations_drops_inline_spaces_for_cjk(tmp_path):
+    html = _apply_inline_deck(tmp_path, "ja-JP", ["速く", "そして", "簡単"])
+    assert "<p>速く<b>そして</b>簡単</p>" in html

@@ -1,8 +1,8 @@
 """Validation for the structured data agents pass to one another.
 
 These are the machine-readable contracts described in
-`.claude/skills/slide_deck_localization/SKILL.md` (Agent 1 output),
-`.claude/skills/slideshow_video_production/SKILL.md` (Agent 2 output),
+`.agents/skills/slide_deck_localization/SKILL.md` (Agent 1 output),
+`.agents/skills/slideshow_video_production/SKILL.md` (Agent 2 output),
 and each skill's "Handoff contract" section. Kept dependency-free (no
 jsonschema) so every skill script can import this without an extra
 install.
