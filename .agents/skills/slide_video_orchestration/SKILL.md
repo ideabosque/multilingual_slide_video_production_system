@@ -59,6 +59,7 @@ success/failure so this is safe to drive from Bash.
 | `validate_pipeline` | `msv pipeline validate` | Consistency check: source deck still present/unchanged, no orphaned in-progress stages, retry budgets |
 | *(production review)* | `msv pipeline approve-production` | Human-approved release of every non-default language's `translation`/`tts`/`rendering` stages, after reviewing the default language's render — see "Default-language-first production gate" |
 | `publish_pending` | `msv pipeline approve-publish` then run `publishing` actions | Human-approved release of videos held at `ready_for_review` |
+| *(motion review)* | `msv pipeline register-motion` / `approve-motion` / `reject-motion --notes` | The deck's custom motion design and its human approval (motion-design skill). `render-motion` refuses non-default languages until the current design file is approved; any edit reopens the gate. Separate from the production gate |
 
 ## The run loop (what `run_pipeline` / `resume_pipeline` actually do)
 

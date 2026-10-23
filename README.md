@@ -285,6 +285,10 @@ msv production render-slideshow --run-id ... --project-id ... --language ... \
     --source-deck <original_deck_dir> --slides-dir state/<run_id>/analysis/slides/rendered_<language> \
     --localization ... --output-dir output/<run_id>/<language> [--audio-dir ...] [--no-burn-in]
 
+msv motion preview --production ... --translated-deck-dir ... --animation-dir ... [--motion-design ...]   # small fast render + filmstrip
+msv motion filmstrip --video ... --motion-json ... --out ...
+msv motion schema           # the motion-design/v1 JSON Schema
+msv pipeline register-motion / approve-motion / reject-motion --notes ...   # the motion design approval gate
 msv motion install          # npm ci in motion/ (pinned HyperFrames + Remotion), then Remotion's browser
 msv motion doctor           # Node, ffmpeg, Chromium, per-engine availability, Remotion license reminder
 
@@ -349,8 +353,11 @@ comfort rules (no more than 3 flashes per second, at most 6 elements moving
 at once, time left to read). At render time a slide whose design fails in
 one language plays its preset there, with a warning naming it.
 `docs/examples/motion_design.food-manufacturing.json` is a worked example.
-Claude writing these designs itself, with an approval gate, is the plan's
-Phase 6.
+Ask Claude to design a deck's motion and it follows the `motion_design`
+skill: it maps the deck, writes the design, previews it and checks the
+filmstrip (up to 3 rounds), then asks you to approve. Other languages
+render the design only after `msv pipeline approve-motion`, and any edit
+to the design needs a fresh approval.
 
 ## Architecture
 

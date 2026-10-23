@@ -274,6 +274,14 @@ def validate_motion_design(doc: Any, *, slide_ids: list[str] | None = None,
     return errors
 
 
+def design_fingerprint(path: str | Path) -> str:
+    """The design file's content fingerprint: what the motion approval gate
+    is keyed to, so any edit reopens it."""
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+
+
 def load_motion_design(path: str | Path, *, slide_ids: list[str] | None = None,
                        presets: set[str] | None = None) -> dict[str, Any]:
     """Read and validate a motion design; raises MotionDesignError listing

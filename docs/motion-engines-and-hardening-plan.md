@@ -156,7 +156,60 @@ branch `feature/remotion-and-motion-language`).**
     that resolves to nothing still fails the render loudly, naming the
     step.
 
-Phases 6–7 and the rest of 8 are approved, not started. Open
+**Phase 6 built (2026-10-23): motion design skills and the approval gate
+(C2, C6, C7).**
+
+- Skills: the `motion_design` orchestrator (role, approval gate, never
+  self-approves) and the `deck_motion_design` procedure:
+  1. inspect-layout;
+  2. `msv motion schema` as the language reference;
+  3. write the design;
+  4. validate-motion;
+  5. preview, then inspect the filmstrip;
+  6. at most 3 rounds, logged in `motion_design.review.md`;
+  7. per-language check;
+  8. register-motion and hand over.
+
+  `pipeline_orchestrator`, `slide_video_orchestration`,
+  `multilingual_rollout` and `slideshow_video_production` are wired to it.
+- Gate: a `motion` block in run state (`design`, `fingerprint`, `status`
+  draft/approved/rejected, `approved_fingerprint`, `notes`).
+  - `msv pipeline register-motion` / `approve-motion` / `reject-motion
+    --notes`, and `pipeline init --auto-approve-motion`
+    (`PIPELINE_AUTO_APPROVE_MOTION`).
+  - Within a run, `render-motion` refuses a non-default language unless
+    the design file, as it is now, was approved. An edit reopens the gate,
+    and approving an edited file requires registering it again.
+  - The gate is keyed to the design file's sha256 (16 hex characters).
+- Review tools:
+  - `msv motion preview`: 640×360 at 12 fps by default, not held by the
+    gate, never touches production.json. 80s for the 10-minute reference
+    deck, against about 6 minutes for a full render.
+  - `msv motion filmstrip`: one row per slide, at 0/15/30/60/95%.
+- Exit criterion, as far as it goes so far. The skill was followed on a
+  second real deck (`run-20260818-001`, A2A on Hermes Agent, 13 slides):
+  - round 1 passed validation; its filmstrip showed an empty panel on
+    slides 1 and 7;
+  - round 2 fixed that and passed;
+  - the design is registered (draft) and waits for human review.
+
+  "Approved on first or second review" and "the rollout renders all
+  languages from it" still need the user. Rolling out is on hold at the
+  user's request: no further translation or publishing after testing.
+- **Findings:**
+  - `run-20260818-001`'s analysis predates the extractor fix for the stray
+    doctype text. Its translated decks start with a stray "html", and its
+    localization node ids are offset by one, so `apply-translations`
+    rightly refuses it. That run needs re-analysis before any non-English
+    render.
+  - Page injection now copes with pages that parse without a `</head>`.
+    It previously did nothing, and the slide's timeline never registered.
+- **Deviation:** previews re-render the whole deck. "Re-preview only the
+  affected slides" (C2) is done by limiting the filmstrip to those slides
+  (`--slides`); at 80s a deck, a partial render wasn't worth the
+  complexity yet.
+
+Phase 7 and the rest of 8 are approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 

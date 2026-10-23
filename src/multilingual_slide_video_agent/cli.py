@@ -411,6 +411,84 @@ def motion_install() -> None:
     })
 
 
+@motion.command("preview")
+@click.option("--production", "production_path", required=True, type=click.Path(exists=True), help="A narrated language's production.json (msv production narrate output)")
+@click.option("--translated-deck-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--animation-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--motion-design", "motion_design_path", type=click.Path(exists=True), help="The design to preview; without it, the slides' templates")
+@click.option("--localization", type=click.Path(exists=True), help="For captions (optional)")
+@click.option("--engine", type=click.Choice(["remotion", "hyperframes"]), help="Defaults to config/motion.yaml's default_engine")
+@click.option("--res", "res", default="640x360", show_default=True, help="Output size; the deck still lays out at --viewport")
+@click.option("--fps", default=12, show_default=True, type=int)
+@click.option("--out-dir", type=click.Path(file_okay=False), help="Defaults to <production dir>/motion_preview")
+@click.option("--slides", "slide_ids", help="Comma-separated slide ids for the filmstrip (default: every slide)")
+@click.option("--viewport", default="1920x1080", show_default=True)
+def motion_preview(
+    production_path: str, translated_deck_dir: str, animation_dir: str, motion_design_path: str | None,
+    localization: str | None, engine: str | None, res: str, fps: int, out_dir: str | None,
+    slide_ids: str | None, viewport: str,
+) -> None:
+    "Render a small, fast preview of a language with a motion design, plus its filmstrip, for review (plan C6). It never touches production.json and is not held by the motion approval gate."
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.production.motion.filmstrip import filmstrip_for_render
+    from multilingual_slide_video_agent.production.motion.render import render_motion
+
+    try:
+        width, height = (int(v) for v in res.lower().split("x"))
+    except ValueError:
+        _echo_result({"ok": False, "errors": [f"--res must look like 640x360, got {res!r}"]})
+        return
+    out = Path(out_dir) if out_dir else Path(production_path).resolve().parent / "motion_preview"
+    video, motion_json = out / "preview.mp4", out / "preview.motion.json"
+    errors, warnings = [], []
+    try:
+        envelope = render_motion(
+            production_path=production_path, translated_deck_dir=translated_deck_dir, animation_dir=animation_dir,
+            localization_path=localization, output_dir=str(out), output_name="preview.mp4", engine_name=engine,
+            viewport=viewport, record_in_production=False, motion_design_path=motion_design_path,
+            fps=fps, resolution={"width": width, "height": height}, motion_gate=False,
+        )
+        warnings = envelope.get("warnings", [])
+    except MotionError as e:
+        errors.append(str(e))
+    result: dict = {"ok": not errors, "errors": errors, "warnings": warnings}
+    if video.exists() and motion_json.exists():
+        # Even a preview that failed validation is worth looking at.
+        strip = filmstrip_for_render(video, motion_json, out / "preview_filmstrip.png",
+                                     slide_ids=slide_ids.split(",") if slide_ids else None)
+        manifest = json.loads(motion_json.read_text(encoding="utf-8"))
+        result.update({"video": str(video), "filmstrip": str(strip), "motion_json": str(motion_json),
+                       "fallback": (manifest.get("motion_design") or {}).get("fallback", {}),
+                       "validation_errors": manifest.get("validation", {}).get("errors", [])})
+    _echo_result(result)
+
+
+@motion.command("filmstrip")
+@click.option("--video", required=True, type=click.Path(exists=True))
+@click.option("--motion-json", required=True, type=click.Path(exists=True), help="The video's <stem>.motion.json from render-motion")
+@click.option("--out", required=True, type=click.Path())
+@click.option("--slides", "slide_ids", help="Comma-separated slide ids (default: every slide)")
+def motion_filmstrip(video: str, motion_json: str, out: str, slide_ids: str | None) -> None:
+    "One row per slide, frames at 0/15/30/60/95% of it, for reviewing motion (plan C6)."
+    from multilingual_slide_video_agent.production.motion.errors import MotionError
+    from multilingual_slide_video_agent.production.motion.filmstrip import filmstrip_for_render
+
+    try:
+        path = filmstrip_for_render(video, motion_json, out, slide_ids=slide_ids.split(",") if slide_ids else None)
+    except MotionError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    _echo_result({"ok": True, "filmstrip": str(path)})
+
+
+@motion.command("schema")
+def motion_schema() -> None:
+    "Print the motion-design/v1 JSON Schema, generated from the validator's own vocabulary (the language reference for writing designs)."
+    from multilingual_slide_video_agent.slides.motion_design import json_schema
+
+    _echo_result({"ok": True, "schema": json_schema()})
+
+
 @motion.command("doctor")
 def motion_doctor() -> None:
     "Environment check for motion rendering (plan B3 #3): Node, ffmpeg, Chromium, each engine's availability, plus the Remotion license reminder (B5)."
@@ -558,9 +636,10 @@ def _resolve_run_id(run_id: str | None, project_id: str | None) -> str | None:
 @click.option("--auto-publish", type=bool, default=None)
 @click.option("--default-language", help="Rendered and reviewed first; defaults to DEFAULT_LANGUAGE. Every other language's translation stage is held until it's approved (msv pipeline approve-production).")
 @click.option("--auto-approve-production", type=bool, default=None, help="Skip the default-language approval gate entirely (defaults to PIPELINE_AUTO_APPROVE_PRODUCTION, false)")
+@click.option("--auto-approve-motion", type=bool, default=None, help="Let a validated motion design render every language without human approval (defaults to PIPELINE_AUTO_APPROVE_MOTION, false)")
 def pipeline_init(
     project_id: str, source_deck: str, languages: str | None, run_id: str | None, auto_publish: bool | None,
-    default_language: str | None, auto_approve_production: bool | None,
+    default_language: str | None, auto_approve_production: bool | None, auto_approve_motion: bool | None,
 ) -> None:
     """Create a new pipeline run (run_pipeline, part 1)."""
     from multilingual_slide_video_agent.logging_utils import RunLogger
@@ -589,6 +668,8 @@ def pipeline_init(
         run_id=resolved_run_id, project_id=project_id, source_deck=source_deck,
         language_codes=language_list, auto_publish=resolved_auto_publish,
         default_language=resolved_default_language, auto_approve_production=resolved_auto_approve_production,
+        auto_approve_motion=(auto_approve_motion if auto_approve_motion is not None
+                             else cfg.env_bool("PIPELINE_AUTO_APPROVE_MOTION", False)),
     )
     RunLogger(resolved_run_id, project_id).log(
         agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
@@ -738,6 +819,59 @@ def pipeline_approve_production(run_id: str) -> None:
         event="production_approved", status="completed", language=state.default_language,
     )
     _echo_result({"ok": True, "default_language": state.default_language, "next_actions": state.next_actions()})
+
+
+@pipeline.command("register-motion")
+@click.option("--run-id", required=True)
+@click.option("--design", "design_path", required=True, type=click.Path(exists=True), help="The deck's motion_design.json")
+@handle_errors
+def pipeline_register_motion(run_id: str, design_path: str) -> None:
+    """Record the deck's motion design for review (plan C2). A changed file
+    becomes a draft again; the approved file, unchanged, keeps its approval."""
+    from multilingual_slide_video_agent.slides.motion_design import design_fingerprint
+
+    with PipelineState.transaction(run_id) as state:
+        state.register_motion(str(Path(design_path).resolve()), design_fingerprint(design_path))
+    _echo_result({"ok": True, "motion": state.to_report()["motion"]})
+
+
+@pipeline.command("approve-motion")
+@click.option("--run-id", required=True)
+@handle_errors
+def pipeline_approve_motion(run_id: str) -> None:
+    """Approve the registered motion design, as its file is now, for every
+    language (plan C2). Run after a human has reviewed its preview."""
+    from multilingual_slide_video_agent.logging_utils import RunLogger
+    from multilingual_slide_video_agent.slides.motion_design import design_fingerprint
+
+    with PipelineState.transaction(run_id) as state:
+        if not state.motion:
+            _echo_result({"ok": False, "errors": ["no motion design registered for this run (msv pipeline register-motion)"]})
+            return
+        try:
+            state.approve_motion(design_fingerprint(state.motion["design"]))
+        except (ValueError, OSError) as e:
+            _echo_result({"ok": False, "errors": [str(e)]})
+            return
+    RunLogger(run_id, state.project_id).log(
+        agent="pipeline_orchestrator_agent", skill="slide_video_orchestration",
+        event="motion_approved", status="completed", design=state.motion["design"],
+    )
+    _echo_result({"ok": True, "motion": state.to_report()["motion"]})
+
+
+@pipeline.command("reject-motion")
+@click.option("--run-id", required=True)
+@click.option("--notes", required=True, help="What to change, in plain language (e.g. 'slide 3 feels busy')")
+@handle_errors
+def pipeline_reject_motion(run_id: str, notes: str) -> None:
+    """Send the motion design back for revision with the reviewer's notes."""
+    with PipelineState.transaction(run_id) as state:
+        if not state.motion:
+            _echo_result({"ok": False, "errors": ["no motion design registered for this run (msv pipeline register-motion)"]})
+            return
+        state.reject_motion(notes)
+    _echo_result({"ok": True, "motion": state.to_report()["motion"]})
 
 
 @pipeline.command("approve-publish")

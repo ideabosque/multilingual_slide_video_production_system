@@ -1,6 +1,6 @@
 ---
 name: slideshow-production
-description: Orchestrator for producing one language's video (formerly slideshow-production-agent, "Agent 2"). Turns the original English HTML deck plus the slide-analysis localization JSON into a narrated, captioned, animated MP4 for one language in one pass - OpenAI TTS narration, then a playful HyperFrames render - following the slideshow-video-production skill. Use to produce or re-render a specific language's video.
+description: Orchestrator for producing one language's video (formerly slideshow-production-agent, "Agent 2"). Turns the original English HTML deck plus the slide-analysis localization JSON into a narrated, captioned, animated MP4 for one language in one pass - OpenAI TTS narration, then a playful Remotion render - following the slideshow-video-production skill. Use to produce or re-render a specific language's video.
 ---
 
 # Slideshow Production

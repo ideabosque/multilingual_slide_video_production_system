@@ -102,6 +102,7 @@ def MotionRenderContext_from_production(
     roles_path: str | Path | None = None,
     viewport: str = "1920x1080",
     fps: int | None = None,
+    resolution: dict[str, int] | None = None,
     motion_config: dict[str, Any] | None = None,
     video_config: dict[str, Any] | None = None,
 ) -> "MotionRenderContext":
@@ -184,7 +185,7 @@ def MotionRenderContext_from_production(
         run_id=production.get("run_id", "unknown-run"),
         project_id=production.get("project_id", "unknown-project"),
         language=production.get("language", "unknown"),
-        resolution=_resolution_from_video_config(video_cfg),
+        resolution=resolution or _resolution_from_video_config(video_cfg),
         fps=int(fps if fps is not None else motion_cfg.get("fps", 30)),
         viewport=viewport,
         timing=timing,

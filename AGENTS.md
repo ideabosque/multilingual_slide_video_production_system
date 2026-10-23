@@ -35,7 +35,7 @@ src/multilingual_slide_video_agent/
   slides/layout_map.py     inspect-layout: targetable elements, groups, SVG shapes, roles
   publishing/            YouTube upload / OAuth
 config/                  languages, terminology, video, motion, design system, animation templates
-.agents/skills/          all skills: 5 orchestrator skills + the procedure skills they follow
+.agents/skills/          all skills: 6 orchestrator skills + the procedure skills they follow
 docs/                    development plans; the active one is motion-engines-and-hardening-plan.md
 motion/                  pinned Node toolchain for the HyperFrames/Remotion engines
 tests/                   pytest suite
@@ -55,6 +55,7 @@ the former agents are now orchestrator skills.
 | `slideshow_production` | `slideshow_video_production` |
 | `language_rollout` | `multilingual_rollout` |
 | `youtube_publishing` | `youtube_video_publishing` |
+| `motion_design` (custom per-deck motion + its approval gate) | `deck_motion_design` |
 
 `gsap_animation_authoring` and `motion_design_principles` are loaded only
 for template-library maintenance (see `slideshow_production`).

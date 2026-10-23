@@ -50,6 +50,20 @@ def get_engine(name: str) -> MotionEngine:
     )
 
 
+def _check_motion_gate(path: str, ctx: Any) -> None:
+    """The motion approval gate (plan C2): within a pipeline run, only the
+    default language renders a design that isn't approved as it is now.
+    A render outside any run (no state file) has no gate."""
+    from multilingual_slide_video_agent.slides.motion_design import design_fingerprint
+    from multilingual_slide_video_agent.state import PipelineState
+
+    if not PipelineState.exists(ctx.run_id):
+        return
+    reason = PipelineState.load(ctx.run_id).motion_gate(ctx.language, design_fingerprint(path))
+    if reason:
+        raise MotionError(f"{ctx.language} can't render this motion design yet: {reason}")
+
+
 def _load_design_for_render(path: str, ctx: Any) -> dict[str, Any]:
     """Check a motion design against this language's deck and timing (plan
     C5/C6) and put it on the context. A problem with the design as a whole
@@ -126,6 +140,9 @@ def render_motion(
     viewport: str = "1920x1080",
     record_in_production: bool = True,
     motion_design_path: str | None = None,
+    fps: int | None = None,
+    resolution: dict[str, int] | None = None,
+    motion_gate: bool = True,
 ) -> dict[str, Any]:
     """Render one language's animated video (default `video.mp4`) against
     the narration timing in its `production.json` - the `rendering` stage
@@ -141,6 +158,11 @@ def render_motion(
     validated before anything renders, then played by the engine in place
     of each slide's template.
 
+    `fps` and `resolution` override config/motion.yaml and VIDEO_RESOLUTION
+    (`msv motion preview` renders small and fast with them). A preview also
+    passes `motion_gate=False`: reviewing a design in several languages is
+    how it gets approved. Production renders keep the gate.
+
     Returns a status envelope whose `outputs` describe the video, its
     captions and its motion manifest. Raises
     MotionError (after `motion.json` + logs are written, when validation is
@@ -155,13 +177,15 @@ def render_motion(
     ctx = MotionRenderContext_from_production(
         production_path=production_path, translated_deck_dir=translated_deck_dir,
         animation_dir=animation_dir, slides_dir=slides_dir, localization_path=localization_path,
-        roles_path=roles_path, viewport=viewport,
+        roles_path=roles_path, viewport=viewport, fps=fps, resolution=resolution,
     )
     language, run_id, project_id = ctx.language, ctx.run_id, ctx.project_id
     logger = RunLogger(run_id, project_id)
     design_record = None
     warnings: list[str] = []
     if motion_design_path:
+        if motion_gate:
+            _check_motion_gate(motion_design_path, ctx)
         design_record = _load_design_for_render(motion_design_path, ctx)
         warnings = [f"motion design: {sid} falls back to its preset: {'; '.join(errs)}"
                     for sid, errs in design_record["fallback"].items()] + design_record["warnings"]
