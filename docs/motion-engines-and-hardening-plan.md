@@ -194,8 +194,22 @@ branch `feature/remotion-and-motion-language`).**
   - the design is registered, and the user approved it on first review
     (2026-10-23, `msv pipeline approve-motion`).
 
-  "The rollout renders all languages from it" is still open. Rolling out is on hold at the
-  user's request: no further translation or publishing after testing.
+  "The rollout renders all languages from it": **skipped by the user's
+  decision (2026-10-23)**. On the reference deck (`run-20260911-002`) the
+  sample design was registered and approved, and passes
+  `validate-motion` in all 9 languages (each translated deck with its own
+  narration timing; no fallbacks). It had already rendered and validated
+  in en-US and zh-TW.
+
+  A full rollout was started and stopped after its first languages,
+  because all 9 languages were already published. Re-rendering would
+  only have replaced their recorded videos and withdrawn their publish
+  approvals. Spanish, German and French were restored to their exact
+  prior state; no video or YouTube upload changed.
+
+  Lesson: stopping the background job left the script's own children
+  (the render, then the next language's) running. A rollout must be
+  stoppable as a whole.
 - **Findings:**
   - `run-20260818-001`'s analysis predates the extractor fix for the stray
     doctype text. Its translated decks start with a stray "html", and its
