@@ -118,6 +118,10 @@ class PipelineState:
     default_language: str = "en-US"
     auto_approve_production: bool = False
     production_approved: bool = False
+    # The deck's motion design and its approval gate (plan C2): see
+    # register_motion / approve_motion / motion_gate.
+    motion: dict[str, Any] | None = None
+    auto_approve_motion: bool = False
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     skill_versions: dict[str, str] = field(default_factory=dict)
@@ -139,6 +143,7 @@ class PipelineState:
         auto_publish: bool = False,
         default_language: str = "en-US",
         auto_approve_production: bool = False,
+        auto_approve_motion: bool = False,
     ) -> "PipelineState":
         state_dir().mkdir(parents=True, exist_ok=True)
         state = cls(
@@ -150,6 +155,7 @@ class PipelineState:
             auto_publish=auto_publish,
             default_language=default_language if default_language in language_codes else language_codes[0],
             auto_approve_production=auto_approve_production,
+            auto_approve_motion=auto_approve_motion,
         )
         state.save()
         return state
@@ -172,6 +178,8 @@ class PipelineState:
             default_language=data.get("default_language", "en-US"),
             auto_approve_production=data.get("auto_approve_production", False),
             production_approved=data.get("production_approved", False),
+            motion=data.get("motion"),
+            auto_approve_motion=data.get("auto_approve_motion", False),
             created_at=data.get("created_at", _now()),
             updated_at=data.get("updated_at", _now()),
             skill_versions=data.get("skill_versions", {}),
@@ -238,6 +246,8 @@ class PipelineState:
             "default_language": self.default_language,
             "auto_approve_production": self.auto_approve_production,
             "production_approved": self.production_approved,
+            "motion": self.motion,
+            "auto_approve_motion": self.auto_approve_motion,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "skill_versions": self.skill_versions,
@@ -296,6 +306,60 @@ class PipelineState:
         language."""
         self.production_approved = True
         self.save()
+
+    # ---------- motion design gate (plan C2) ----------
+    #
+    # The deck's motion design is a creative output with its own run-level
+    # approval, like production. The gate is keyed to the design file's
+    # content: editing an approved design reopens it, so what renders in
+    # every language is exactly what a human approved.
+
+    def register_motion(self, design_path: str, fingerprint: str) -> None:
+        """Record the deck's motion design as a draft awaiting review. Re-
+        registering the approved file unchanged keeps its approval."""
+        current = self.motion or {}
+        if current.get("status") == "approved" and current.get("approved_fingerprint") == fingerprint:
+            current.update({"design": design_path, "fingerprint": fingerprint, "updated_at": _now()})
+        else:
+            current = {"design": design_path, "fingerprint": fingerprint, "status": "draft",
+                       "approved_fingerprint": None, "approved_at": None, "notes": None, "updated_at": _now()}
+        self.motion = current
+        self.save()
+
+    def approve_motion(self, fingerprint: str) -> None:
+        """Approve the registered design as its file is now (`fingerprint`)."""
+        if not self.motion:
+            raise ValueError("no motion design registered for this run (msv pipeline register-motion)")
+        if fingerprint != self.motion["fingerprint"]:
+            raise ValueError("the motion design changed since it was registered; register it again and review "
+                             "the new preview before approving")
+        self.motion.update({"status": "approved", "approved_fingerprint": fingerprint, "approved_at": _now(),
+                            "updated_at": _now()})
+        self.save()
+
+    def reject_motion(self, notes: str) -> None:
+        """A reviewer's notes in plain language; the design goes back for revision."""
+        if not self.motion:
+            raise ValueError("no motion design registered for this run (msv pipeline register-motion)")
+        self.motion.update({"status": "rejected", "approved_fingerprint": None, "approved_at": None,
+                            "notes": notes, "updated_at": _now()})
+        self.save()
+
+    def motion_gate(self, language: str, fingerprint: str) -> str | None:
+        """Why `language` may not render this design yet, or None when it
+        may. The default language renders a draft (that's how the design is
+        reviewed); every other language needs this exact file approved,
+        unless PIPELINE_AUTO_APPROVE_MOTION was set for the run."""
+        if language == self.default_language or self.auto_approve_motion:
+            return None
+        motion = self.motion or {}
+        if not motion:
+            return "this run has no registered motion design (msv pipeline register-motion, then approve-motion)"
+        if motion.get("approved_fingerprint") == fingerprint:
+            return None
+        if motion.get("status") == "approved":
+            return "the motion design changed after it was approved; it needs a fresh review (msv pipeline approve-motion)"
+        return f"the motion design is {motion.get('status', 'draft')}, not approved (msv pipeline approve-motion)"
 
     def approve_publish(self, language: str) -> None:
         """Human sign-off to release one language's `publishing` stage when
@@ -471,6 +535,8 @@ class PipelineState:
             "auto_publish": self.auto_publish,
             "default_language": self.default_language,
             "production_approved": self.production_approved or self.auto_approve_production,
+            "motion": ({**self.motion, "auto_approve": self.auto_approve_motion} if self.motion
+                       else {"status": "none", "auto_approve": self.auto_approve_motion}),
             "overall_status": self.overall_status(),
             "updated_at": self.updated_at,
             "languages": {

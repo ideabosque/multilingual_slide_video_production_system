@@ -177,7 +177,14 @@ def inject_animation_page(
         '<script src="animation_runtime.js" defer></script>\n'
         f"{_ANIMATION_MARKER_END}\n"
     )
-    html = html.replace("</head>", override + "</head>", 1)
+    if "</head>" in html:
+        html = html.replace("</head>", override + "</head>", 1)
+    elif re.search(r"<body\b", html, re.IGNORECASE):
+        # A page parsed without a head (malformed markup before <html>)
+        # still gets the runtime: the browser moves these tags into <head>.
+        html = re.sub(r"(<body\b)", lambda m: override + m.group(1), html, count=1, flags=re.IGNORECASE)
+    else:
+        raise RenderError(f"{page_path.name}: no </head> or <body> to inject the animation runtime into")
     (dest or page_path).write_text(html, encoding="utf-8")
 
 

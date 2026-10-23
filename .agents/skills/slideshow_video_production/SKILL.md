@@ -1,6 +1,6 @@
 ---
 name: slideshow-video-production
-description: Video production procedure for Agent 2 (followed by the slideshow-production orchestrator skill). Applies Agent 1's per-language slide translations back into the original English HTML deck, narrates it via OpenAI TTS, and renders the language's animated video in one pass with HyperFrames (playful GSAP motion, burned-in captions, narration). Use when producing, re-rendering, or re-recording narration/captions for one specific language of a slide deck.
+description: Video production procedure for Agent 2 (followed by the slideshow-production orchestrator skill). Applies Agent 1's per-language slide translations back into the original English HTML deck, narrates it via OpenAI TTS, and renders the language's animated video in one pass with Remotion (playful GSAP motion, burned-in captions, narration). Use when producing, re-rendering, or re-recording narration/captions for one specific language of a slide deck.
 ---
 
 # Slideshow Video Production Skill
@@ -243,8 +243,12 @@ One language per run. Stages in order: `translation` → `tts` → `rendering`
      while rendering.
    - `--motion-design <motion_design.json>` plays the deck's motion design
      (schema `motion-design/v1`) instead of each slide's template. Pass
-     it only when the user supplied one or asked for it; this skill does
-     not write designs. Render every language from the same file. A
+     it when the dispatch gives you a design path (the run's registered
+     design, `report.motion.design`) or the user supplied one; this skill
+     does not write designs (motion-design does). Within a run,
+     `render-motion` refuses a non-default language until that design is
+     approved (`msv pipeline approve-motion`): report that, don't work
+     around it. Render every language from the same file. A
      design that is broken as a whole (header, wrong deck) fails before
      rendering: report the errors and stop. A slide whose design fails
      in this language plays its preset instead; report the envelope's
@@ -312,7 +316,7 @@ deck, then `msv production render-slideshow ... --slides-dir
 
 ## Render failures
 
-A slide's script error fails the render loudly (HyperFrames' `check` runs
+A slide's script error fails the render loudly in either engine (HyperFrames' `check` runs
 first) and names the slide. That's deliberately not a soft warning: a
 silently broken animation (e.g. a selector that never matches) isn't
 visible from the output file without frame-by-frame review.

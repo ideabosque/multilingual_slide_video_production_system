@@ -1,6 +1,6 @@
 ---
 name: pipeline-orchestrator
-description: Orchestrator and primary entry point for the multilingual slide video system (formerly pipeline-orchestrator-agent, "Agent 4"). Given a source HTML slide deck, runs the full pipeline - analysis, per-language production, validation, optional publishing - by dispatching the slide-analysis, slideshow-production, language-rollout and youtube-publishing orchestrator skills, tracks resumable state, and reports status. Use for any "produce localized slideshow videos from X" request, for checking pipeline status, or for retrying/rerunning a specific language or stage.
+description: Orchestrator and primary entry point for the multilingual slide video system (formerly pipeline-orchestrator-agent, "Agent 4"). Given a source HTML slide deck, runs the full pipeline - analysis, optional custom motion design, per-language production, validation, optional publishing - by dispatching the slide-analysis, motion-design, slideshow-production, language-rollout and youtube-publishing orchestrator skills, tracks resumable state, and reports status. Use for any "produce localized slideshow videos from X" request, for checking pipeline status, or for retrying/rerunning a specific language or stage.
 ---
 
 # Pipeline Orchestrator
@@ -60,6 +60,18 @@ every `msv pipeline` subcommand you need. In short:
    - This split exists to catch a systemic bug in one language's render
      before it's repeated, and TTS-billed, across every other language.
      Routing around it defeats the purpose.
+7a. **Custom motion (only when the user asks Claude to design the deck's
+   motion).** Dispatch **motion-design** (`.agents/skills/motion_design/`)
+   after the default language's `tts` completes and before its
+   `rendering`. It writes and previews the design, registers it, and asks
+   the user for approval (`msv pipeline approve-motion`).
+   - Then every slideshow-production dispatch, including the default
+     language's own render and every rollout language, passes the design
+     path with `--motion-design`.
+   - `msv pipeline status` shows the gate under `report.motion`.
+     `render-motion` refuses non-default languages until the current file
+     is approved. Approve only on the user's explicit word, as with
+     production.
 8. When `PIPELINE_AUTO_PUBLISH=false`, stop once every language reaches
    `ready_for_review` and explicitly ask the user whether to publish. Name
    the language(s), the video path, the title and any pacing warnings.
@@ -72,7 +84,7 @@ Always finish by reporting `msv pipeline report`'s per-language status,
 never a single collapsed pass/fail for the whole run.
 
 **Production is animation-first.** Each language's video is the animated
-render (playful motion, HyperFrames), produced in one pass by
+render (playful motion, Remotion by default), produced in one pass by
 slideshow-production: narration (`tts`), then the animated render
 (`rendering`). There is no static-video-first step. Both review gates are
 unchanged: the default language is reviewed before the rollout, and

@@ -58,6 +58,21 @@ def test_deck_scripts_are_dropped_from_pages(tmp_path):
     assert '<script src="animation_runtime.js" defer></script>' in page
 
 
+def test_pages_parsed_without_a_head_still_get_the_runtime(tmp_path):
+    """Decks translated before the doctype fix start with a stray "html"
+    text; lxml then parses the whole page into <body> and there is no
+    </head>. The runtime must still be injected, or the slide's timeline
+    never registers."""
+    source = tmp_path / "slide_001.html"
+    source.write_text('html<html lang="en">\n<head><meta charset="utf-8"/><style>h1{color:red}</style></head>'
+                      "<body><h1>Hi</h1></body></html>", encoding="utf-8")
+    dest = tmp_path / "out.html"
+    rm._prepare_page(source, dest, slide_id="slide_001", template="feature_callout", duration=2.0)
+    page = dest.read_text(encoding="utf-8")
+    assert "</head>" not in page
+    assert page.index('<script src="animation_runtime.js" defer></script>') < page.index("<body")
+
+
 def _skip_unless_available():
     if rm.check_available():
         pytest.skip("; ".join(rm.check_available()))

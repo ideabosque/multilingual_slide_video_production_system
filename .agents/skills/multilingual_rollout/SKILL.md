@@ -86,7 +86,10 @@ one.
 4. For each remaining language, dispatch `slideshow-production` with
    that language's `run_id`/`project_id`/`source_deck` and its
    `localization_<language>.json` path — the same inputs Agent 4 would
-   pass directly. With subagents, send all dispatches in one batch so they
+   pass directly. If `report.motion.status` is `approved`, also pass its
+   `design` path for `--motion-design`. If a design is registered but not
+   approved (`draft` or `rejected`), stop and report that the motion
+   approval is still open instead of rendering without it. With subagents, send all dispatches in one batch so they
    run concurrently; without them, run the languages one after another.
 5. Wait for every dispatch to report back. Do not retry a failed one
    yourself — that's Agent 4's `PIPELINE_MAX_RETRIES` policy, applied on
