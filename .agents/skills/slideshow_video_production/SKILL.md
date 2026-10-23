@@ -321,6 +321,20 @@ first) and names the slide. That's deliberately not a soft warning: a
 silently broken animation (e.g. a selector that never matches) isn't
 visible from the output file without frame-by-frame review.
 
+When a render fails or an engine seems unavailable:
+
+1. Run `msv motion doctor` first. It reports Node, ffmpeg, Chromium and
+   each engine's missing prerequisites. If an engine or its browser is
+   missing, the fix is `msv motion install`.
+2. If the error names a slide, report it with that slide id. Don't retry
+   with the other engine to get around it: both play the same animation,
+   so the same slide fails there too.
+3. To see what changed between two renders of one language (before and
+   after a fix, or the two engines), use `msv motion compare --a <video>
+   --b <video> --out <sheet.png>`. Every slide's duration must match
+   within a frame; the sheet shows A, B and their difference at each
+   slide's midpoint.
+
 ## Handoff contract
 
 On success, emits:

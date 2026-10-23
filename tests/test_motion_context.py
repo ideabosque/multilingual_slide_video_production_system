@@ -18,7 +18,7 @@ def _prepare(tmp_path, templates_by_slide=None, roles=None):
     templates_by_slide = templates_by_slide or {"slide_001": "title_reveal", "slide_002": "stat_highlight"}
     from motion_fixture_helpers import make_minimal_animation_bundle
     make_minimal_animation_bundle(tmp_path / "anim", templates_by_slide)
-    production = write_production(tmp_path / "out", list(templates_by_slide))
+    production = write_production(tmp_path / "out", list(templates_by_slide), with_audio=False)
     roles_path = None
     if roles is not None:
         roles_path = tmp_path / "roles_en-US.json"
