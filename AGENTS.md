@@ -31,6 +31,8 @@ src/multilingual_slide_video_agent/
                          animated video - clips.py's shared clip plan, the hyperframes and
                          remotion engines, post-pass, validation)
   slides/motion_design.py  the motion-design/v1 language: validator, steps, transitions
+  slides/motion_checks.py  validate-motion guardrails and the per-slide render fallback
+  slides/layout_map.py     inspect-layout: targetable elements, groups, SVG shapes, roles
   publishing/            YouTube upload / OAuth
 config/                  languages, terminology, video, motion, design system, animation templates
 .agents/skills/          all skills: 5 orchestrator skills + the procedure skills they follow

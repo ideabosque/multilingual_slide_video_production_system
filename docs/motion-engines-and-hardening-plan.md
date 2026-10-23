@@ -107,7 +107,55 @@ branch `feature/remotion-and-motion-language`).**
   - Retiring the Playwright engine had removed `msv slides render`'s
     `json` import (fixed on the PR branch too).
 
-Phases 5–7 and the rest of 8 are approved, not started. Open
+**Phase 5 built (2026-10-22): layout map and guardrails (C4, C5).**
+
+- `msv slides inspect-layout --deck-dir … --out layout_map.json
+  [--annotate-dir …]` (`slides/layout_map.py`). Per slide it records:
+  - text elements, with node ids, box, font size, colour and a number;
+  - repeated sibling groups, each with a selector that matches exactly
+    that group;
+  - SVG shapes with their stroke lengths;
+  - the runtime's resolved roles.
+
+  The annotated screenshots number the elements and outline the groups.
+  The deck itself is never modified.
+- `msv slides validate-motion --design … --deck-dir … [--layout-map …]
+  [--production …]…` (`slides/motion_checks.py`) checks:
+  - schema;
+  - targets: nodes, groups and selectors against the node-tagged deck
+    HTML; roles against the layout map;
+  - the deck fingerprint (content-v1);
+  - brand colour tokens;
+  - at most 3 flashes (`emphasis`/`highlight`) per second;
+  - at most 6 elements moving at once;
+  - the entrance settles within 40% of the shortest slide duration across
+    the given languages;
+  - no step after the slide's end, and beat steps fit before it.
+
+  Every problem names the slide and step.
+- Per-slide fallback at render time: `render-motion --motion-design` runs
+  the same checks against that language's translated deck, timing and
+  source fingerprint. A slide that fails plays its preset in that language
+  only; the envelope's warnings and the manifest's `motion_design.fallback`
+  name it. A broken design header or fingerprint fails the render.
+- Exit criteria met by tests: bad target, bounce ease, 5 flashes per
+  second and a beat past the end are each rejected with a slide-named
+  error, and an end-to-end render falls back for one slide and passes
+  validation. Tests: 201 → 222.
+- The worked example passes every check against the real deck in en-US
+  and zh-TW. Writing it had used the run state's legacy mtime fingerprint;
+  the new fingerprint check caught that, and the example now carries the
+  content-v1 value.
+- **Deviations:**
+  - A "flash" is any `emphasis` or `highlight` start; there is no
+    luminance analysis.
+  - The timing model mirrors the runtime's default durations and
+    staggers, and counts a `text_split` block as one moving element.
+  - Without a layout map, render-time checks skip role targets. A role
+    that resolves to nothing still fails the render loudly, naming the
+    step.
+
+Phases 6–7 and the rest of 8 are approved, not started. Open
 decisions were accepted with their recommended defaults on 2026-10-13 (see
 "Open decisions").
 

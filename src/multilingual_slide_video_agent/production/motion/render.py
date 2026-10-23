@@ -50,6 +50,45 @@ def get_engine(name: str) -> MotionEngine:
     )
 
 
+def _load_design_for_render(path: str, ctx: Any) -> dict[str, Any]:
+    """Check a motion design against this language's deck and timing (plan
+    C5/C6) and put it on the context. A problem with the design as a whole
+    fails the render; a slide whose design fails here plays its preset in
+    this language. Returns the manifest's record of the design."""
+    from multilingual_slide_video_agent.production.motion.clips import duration_tokens
+    from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+    from multilingual_slide_video_agent.slides.motion_checks import (
+        brand_color_tokens, check_motion_design, with_fallbacks,
+    )
+    from multilingual_slide_video_agent.state import FINGERPRINT_ALGO
+
+    raw = Path(path).read_bytes()
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except ValueError as e:
+        raise MotionError(f"can't read motion design {path}: {e}") from e
+    production = json.loads(ctx.production_path.read_text(encoding="utf-8"))
+    fingerprint = (production.get("source_deck_fingerprint")
+                   if production.get("source_deck_fingerprint_algo") == FINGERPRINT_ALGO else None)
+    presets = set(load_template_config(str(ctx.motion_config.get("animation_style", "calm"))))
+    try:
+        check = check_motion_design(
+            doc, deck_dir=ctx.translated_deck_dir, presets=presets, tokens=duration_tokens(ctx.design_tokens),
+            brand_colors=brand_color_tokens(ctx.design_tokens),
+            slide_durations={s.slide_id: s.duration for s in ctx.slides}, source_fingerprint=fingerprint,
+        )
+    except FileNotFoundError as e:   # a deck with no slides
+        raise MotionError(str(e)) from e
+    if check["errors"]:
+        raise MotionError(f"motion design {path} is invalid:\n- " + "\n- ".join(check["errors"]))
+    ctx.motion_design = with_fallbacks(doc, check["slide_errors"], presets)
+    return {"path": str(Path(path).resolve()), "sha256": hashlib.sha256(raw).hexdigest(),
+            "fallback": check["slide_errors"],
+            # Role targets aren't checked without a layout map; the runtime
+            # still fails loudly, naming the step, if one resolves nothing.
+            "warnings": [w for w in check["warnings"] if not w.startswith("no layout map")]}
+
+
 def _record_in_production(
     production_file: Path, final: Path, motion_path: Path, engine_name: str, post_info: dict[str, Any],
     ctx: Any,
@@ -121,21 +160,11 @@ def render_motion(
     language, run_id, project_id = ctx.language, ctx.run_id, ctx.project_id
     logger = RunLogger(run_id, project_id)
     design_record = None
+    warnings: list[str] = []
     if motion_design_path:
-        from multilingual_slide_video_agent.slides.animation_templates import load_template_config
-        from multilingual_slide_video_agent.slides.motion_design import MotionDesignError, load_motion_design
-
-        style = str(ctx.motion_config.get("animation_style", "calm"))
-        try:
-            ctx.motion_design = load_motion_design(
-                motion_design_path, slide_ids=[s.slide_id for s in ctx.slides],
-                presets=set(load_template_config(style)),
-            )
-        except MotionDesignError as e:
-            raise MotionError(str(e)) from e
-        design_bytes = Path(motion_design_path).read_bytes()
-        design_record = {"path": str(Path(motion_design_path).resolve()),
-                         "sha256": hashlib.sha256(design_bytes).hexdigest()}
+        design_record = _load_design_for_render(motion_design_path, ctx)
+        warnings = [f"motion design: {sid} falls back to its preset: {'; '.join(errs)}"
+                    for sid, errs in design_record["fallback"].items()] + design_record["warnings"]
 
     engine_name = engine_name or str(ctx.motion_config.get("default_engine", "hyperframes"))
     engine = get_engine(engine_name)
@@ -239,7 +268,7 @@ def render_motion(
 
     envelope = logger.status_envelope(
         agent="slideshow_production_agent", language=language, status="completed",
-        outputs=result, warnings=[],
+        outputs=result, warnings=warnings,
     )
     logger.log(
         agent="slideshow_production_agent", skill="slideshow_video_production",

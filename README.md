@@ -265,6 +265,8 @@ msv slides render-images --deck-dir <path> --out <dir> [--viewport 1920x1080]
 msv slides apply-translations --deck-dir <original_deck_dir> --localization <localization_<lang>.json> --out <translated_<lang>_dir>
 msv slides validate --slide-analysis ... --localization ... --language ... [--manifest ...] [--project ...]
 msv slides generate-animation --deck-dir <original_deck_dir> --out state/<run_id>/analysis/slides/animation [--slide-analysis ...] [--spec ...]
+msv slides inspect-layout --deck-dir <deck_dir> --out layout_map.json [--annotate-dir ...]   # targets for motion design
+msv slides validate-motion --design motion_design.json --deck-dir <deck_dir> [--layout-map ...] [--production ...]
 
 # stage tts: narration + narration-driven timing + captions -> production.json (no video)
 msv production narrate --run-id ... --project-id ... --language ... \
@@ -340,7 +342,12 @@ move, in what order and at which point in the narration, with effects such
 as word-by-word or line-by-line text, SVG line drawing, highlights,
 arrows between boxes, camera moves, and crossfade/push/wipe transitions
 between slides. The eight templates are its presets. Pass it with
-`render-motion --motion-design`; it is validated before anything renders.
+`render-motion --motion-design`. `msv slides inspect-layout` maps what
+can be targeted on each slide, with numbered screenshots, and
+`msv slides validate-motion` checks a design against the deck and against
+comfort rules (no more than 3 flashes per second, at most 6 elements moving
+at once, time left to read). At render time a slide whose design fails in
+one language plays its preset there, with a warning naming it.
 `docs/examples/motion_design.food-manufacturing.json` is a worked example.
 Claude writing these designs itself, with an approval gate, is the plan's
 Phase 6.

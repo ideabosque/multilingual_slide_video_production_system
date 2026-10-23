@@ -40,16 +40,25 @@ def test_render_motion_reports_a_failed_render_as_a_json_failure_naming_the_file
 
 
 @pytest.mark.requires_ffmpeg
-def test_render_motion_rejects_an_invalid_motion_design_before_rendering(tmp_path, monkeypatch):
-    from motion_fixture_helpers import make_minimal_animation_bundle, write_production
+@pytest.mark.parametrize("deck_slides, design_header, expected", [
+    # the design as a whole is broken: rejected before rendering
+    ({"slide_001": "<h1>One</h1>", "slide_002": "<h1>Two</h1>"}, {"schema": "motion-design/v9"}, "schema must be"),
+    # a deck with no slides: a JSON failure naming it, not a traceback
+    ({}, {}, "No slide_NNN.html files found"),
+])
+def test_render_motion_rejects_a_broken_motion_design_before_rendering(tmp_path, monkeypatch, deck_slides,
+                                                                       design_header, expected):
+    """(A problem in one slide's design falls back to its preset instead;
+    see test_motion_checks.py.)"""
+    from motion_fixture_helpers import make_minimal_animation_bundle, write_deck, write_production
 
     monkeypatch.setenv("MSV_LOGS_DIR", str(tmp_path / "logs"))
     production = write_production(tmp_path / "out", ["slide_001", "slide_002"])
     make_minimal_animation_bundle(tmp_path / "anim", {"slide_001": "title_reveal", "slide_002": "feature_callout"})
-    (tmp_path / "deck").mkdir()
+    write_deck(tmp_path / "deck", deck_slides)
     design = tmp_path / "motion_design.json"
-    design.write_text(json.dumps({"schema": "motion-design/v1", "deck_fingerprint": "x", "slides": [
-        {"slide_id": "slide_002", "steps": [{"target": {"role": "title"}, "effect": "wobble"}]},
+    design.write_text(json.dumps({"schema": "motion-design/v1", "deck_fingerprint": "x", **design_header, "slides": [
+        {"slide_id": "slide_002", "steps": [{"target": {"role": "title"}, "effect": "reveal"}]},
     ]}), encoding="utf-8")
     result = CliRunner().invoke(main, [
         "production", "render-motion", "--engine", "hyperframes", "--motion-design", str(design),
@@ -58,7 +67,7 @@ def test_render_motion_rejects_an_invalid_motion_design_before_rendering(tmp_pat
     ])
     payload = json.loads(result.output)
     assert payload["ok"] is False
-    assert "slide_002.steps[0]" in payload["errors"][0] and "wobble" in payload["errors"][0]
+    assert expected in payload["errors"][0]
 
 
 def test_motion_install_explains_a_missing_lockfile(tmp_path, monkeypatch):

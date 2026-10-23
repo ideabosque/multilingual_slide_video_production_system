@@ -244,9 +244,12 @@ One language per run. Stages in order: `translation` → `tts` → `rendering`
    - `--motion-design <motion_design.json>` plays the deck's motion design
      (schema `motion-design/v1`) instead of each slide's template. Pass
      it only when the user supplied one or asked for it; this skill does
-     not write designs. Render every language from the same file. An
-     invalid design fails before rendering, naming the slide and step:
-     report the errors and stop. Don't edit the design to make it pass.
+     not write designs. Render every language from the same file. A
+     design that is broken as a whole (header, wrong deck) fails before
+     rendering: report the errors and stop. A slide whose design fails
+     in this language plays its preset instead; report the envelope's
+     fallback warnings with the result. Don't edit the design to make it
+     pass.
    - Each slide animates for exactly its narration-driven duration; the
      title card is slide 1's own markup, blurred, behind the title.
    - Captions are burned in, the narration is muxed, and validation runs:

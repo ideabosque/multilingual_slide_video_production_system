@@ -177,6 +177,66 @@ def slides_extract_roles(deck_dir: str, animation_dir: str, out: str, viewport: 
     click.echo(json.dumps(manifest, indent=2, ensure_ascii=False))
 
 
+@slides.command("inspect-layout")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck to map: the original deck when designing motion, a translated deck to check one language")
+@click.option("--out", required=True, type=click.Path(), help="Where to write layout_map.json (convention: the run's analysis/slides/animation/)")
+@click.option("--annotate-dir", type=click.Path(file_okay=False), help="Also save each slide's screenshot with numbered boxes on its targetable elements")
+@click.option("--viewport", default="1920x1080", show_default=True)
+def slides_inspect_layout(deck_dir: str, out: str, annotate_dir: str | None, viewport: str) -> None:
+    "Map each slide's targetable elements for motion design: node ids, boxes, repeated groups, SVG shapes, roles (plan C4)."
+    from multilingual_slide_video_agent.slides.layout_map import LayoutMapError, inspect_layout
+
+    try:
+        layout = inspect_layout(deck_dir=deck_dir, out_path=out, annotate_dir=annotate_dir, viewport=viewport)
+    except LayoutMapError as e:
+        _echo_result({"ok": False, "errors": [str(e)]})
+        return
+    _echo_result({
+        "ok": True, "out": str(Path(out).resolve()), "deck_fingerprint": layout["deck_fingerprint"],
+        "slides": [{"slide_id": s["slide_id"], "elements": len(s["elements"]), "groups": len(s["groups"]),
+                    "svg_shapes": len(s["svg_shapes"]), **({"annotated_image": s["annotated_image"]}
+                                                           if "annotated_image" in s else {})}
+                   for s in layout["slides"]],
+    })
+
+
+@slides.command("validate-motion")
+@click.option("--design", "design_path", required=True, type=click.Path(exists=True), help="The deck's motion_design.json (motion-design/v1)")
+@click.option("--deck-dir", required=True, type=click.Path(exists=True, file_okay=False), help="The deck the design targets: the original deck, or a translated deck to check one language")
+@click.option("--layout-map", "layout_map_path", type=click.Path(exists=True), help="layout_map.json from msv slides inspect-layout, to check role targets")
+@click.option("--production", "production_paths", multiple=True, type=click.Path(exists=True), help="A narrated language's production.json, for slide durations (repeatable; the shortest wins). Without one, timing and comfort checks are skipped")
+@click.option("--source-deck", type=click.Path(exists=True, file_okay=False), help="The original deck, whose fingerprint the design must carry (defaults to --deck-dir)")
+def slides_validate_motion(design_path: str, deck_dir: str, layout_map_path: str | None,
+                           production_paths: tuple[str, ...], source_deck: str | None) -> None:
+    "Check a motion design before rendering: schema, targets, brand, comfort and timing guardrails (plan C5). Problems name the slide and step."
+    from multilingual_slide_video_agent.production.motion.clips import duration_tokens
+    from multilingual_slide_video_agent.slides.animation_templates import load_template_config
+    from multilingual_slide_video_agent.slides.design_system import load_design_system
+    from multilingual_slide_video_agent.slides.motion_checks import (
+        brand_color_tokens, check_motion_design, slide_durations_from_productions,
+    )
+    from multilingual_slide_video_agent.state import directory_fingerprint
+
+    try:
+        doc = json.loads(Path(design_path).read_text(encoding="utf-8"))
+    except ValueError as e:
+        _echo_result({"ok": False, "errors": [f"can't read {design_path}: {e}"]})
+        return
+    layout = json.loads(Path(layout_map_path).read_text(encoding="utf-8")) if layout_map_path else None
+    productions = [json.loads(Path(p).read_text(encoding="utf-8")) for p in production_paths]
+    tokens = load_design_system()
+    style = str(cfg.motion_config().get("animation_style", "calm"))
+    result = check_motion_design(
+        doc, deck_dir=deck_dir, presets=set(load_template_config(style)), tokens=duration_tokens(tokens),
+        brand_colors=brand_color_tokens(tokens), layout_map=layout,
+        slide_durations=slide_durations_from_productions(productions) or None,
+        source_fingerprint=directory_fingerprint(source_deck or deck_dir),
+    )
+    errors = result["errors"] + [e for errs in result["slide_errors"].values() for e in errs]
+    _echo_result({"ok": result["ok"], "errors": errors, "failing_slides": sorted(result["slide_errors"]),
+                  "warnings": result["warnings"], "design": str(Path(design_path).resolve())})
+
+
 # ---------------------------------------------------------------------------
 # msv production ... (Agent 2)
 # ---------------------------------------------------------------------------
