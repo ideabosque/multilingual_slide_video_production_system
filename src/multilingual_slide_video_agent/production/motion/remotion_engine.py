@@ -20,8 +20,8 @@ stays a thin renderer:
 
 The engine's contract is unchanged (base.py): an exact-length silent video.
 Licensing (B5): Remotion's free license covers individuals and companies of
-up to 3 people; `msv motion doctor` prints the reminder, and this engine is
-never the default without an explicit decision (D1).
+up to 3 people; `msv motion doctor` prints the reminder. It is the default
+engine by the user's decision of 2026-10-22 (D1).
 """
 from __future__ import annotations
 

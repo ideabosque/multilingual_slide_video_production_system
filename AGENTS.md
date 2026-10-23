@@ -129,8 +129,10 @@ msv motion install                                  # only needed for the Node-b
   overlap neighbouring clips by equal halves, so no boundary moves.
 - Remotion renders with the chrome-headless-shell `msv motion install`
   downloads, passed explicitly so a render never downloads anything. It is
-  never the default engine without the user's decision (license: free for
-  individuals and companies of up to 3 people).
+  the default engine (`config/motion.yaml`), by the user's decision of
+  2026-10-22 (D1): it renders the deck's own fonts. Don't change the
+  default without the user. License: free for individuals and companies
+  of up to 3 people.
 - HyperFrames substitutes system and generic fonts with its bundled ones
   and queries Google Fonts for other families while rendering. A
   cross-engine comparison must use embedded fonts, or it measures fonts,

@@ -3,12 +3,14 @@
 # still governs slideshow.mp4's static rendering; this file governs
 # render-motion's animated output for all engines.
 #
-# default_engine is flipped deliberately (Open decision D1): the doc's phase
-# plan says NOT to flip it until HyperFrames has passed its Phase 2b/4 parity
-# sign-off, and never to set it to `remotion` without an explicit decision
-# (Remotion's license + the "rebuilt look" are covered by B5).
+# default_engine is Open decision D1, changed only by the user's decision.
+# 2026-10-22: the user chose `remotion`. It renders the deck's own fonts,
+# while HyperFrames swaps system fonts for its bundled ones and looks fonts
+# up on Google Fonts while rendering (plan status block). `--engine
+# hyperframes` still selects HyperFrames. Remotion license: free for
+# individuals and companies of up to 3 people (plan B5).
 
-default_engine: hyperframes  # 2026-10-22: animation-first production (plan Part D); the playwright engine is retired
+default_engine: remotion
 # Motion style: `calm` (config/animation_templates.yaml - short fades, brand
 # ease-out) or `playful` (config/animation_templates_playful.yaml - springy
 # pops, kinetic headlines, beats across the narration, ambient drift, exits).

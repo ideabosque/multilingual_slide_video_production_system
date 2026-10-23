@@ -454,8 +454,8 @@ def motion_doctor() -> None:
         "engines": engines,
         "remotion_license_reminder": (
             "Remotion's free tier covers individuals and companies of <=3 people; re-check on headcount "
-            "growth, any automated-service offering, or a Remotion 5.x upgrade (plan B5). It is never "
-            "the default engine without an explicit decision (D1)."
+            "growth, any automated-service offering, or a Remotion 5.x upgrade (plan B5). It is the "
+            "default engine by the user's decision of 2026-10-22 (D1); --engine hyperframes avoids it."
         ),
     })
 

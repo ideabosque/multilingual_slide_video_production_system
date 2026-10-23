@@ -21,7 +21,7 @@ exactly. In short:
 3. `tts`: `msv production narrate` - narration audio, the narration-driven
    slide timing, captions and `production.json`. No video yet.
 4. `rendering`: `msv production render-motion` - the language's animated
-   video in one pass (HyperFrames, playful style, from `config/motion.yaml`),
+   video in one pass (Remotion, playful style, from `config/motion.yaml`),
    recorded in `production.json`. It needs the deck's animation bundle from
    `msv slides generate-animation`, run once per deck; reuse an existing
    bundle that still matches the deck. Choosing each slide's template is

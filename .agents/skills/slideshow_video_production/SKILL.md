@@ -234,13 +234,13 @@ One language per run. Stages in order: `translation` → `tts` → `rendering`
    output/<run_id>/<lang>/production.json --translated-deck-dir
    state/<run_id>/analysis/slides/translated_<lang> --animation-dir
    state/<run_id>/analysis/slides/animation --localization ...`.
-   - It uses the engine and style in `config/motion.yaml`: HyperFrames,
+   - It uses the engine and style in `config/motion.yaml`: Remotion,
      playful. The animation bundle comes from `msv slides
      generate-animation`, run once per deck (see below).
-   - `--engine remotion` renders the same animation with Remotion. Use it
-     only when the user asks for it. It keeps the deck's own fonts, where
-     HyperFrames substitutes its bundled ones. Remotion's free license
-     covers individuals and companies of up to 3 people.
+   - `--engine hyperframes` renders the same animation with HyperFrames.
+     Use it only when the user asks for it: it substitutes its own bundled
+     fonts for the deck's system fonts, and looks fonts up on Google Fonts
+     while rendering.
    - `--motion-design <motion_design.json>` plays the deck's motion design
      (schema `motion-design/v1`) instead of each slide's template. Pass
      it only when the user supplied one or asked for it; this skill does

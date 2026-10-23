@@ -54,8 +54,9 @@ branch `feature/remotion-and-motion-language`).**
   There is no switch for either. So HyperFrames' videos don't match the
   deck where it uses system fonts: the reference deck's Georgia headlines
   render lighter and smaller. Remotion renders the deck's fonts as
-  Chromium does. **This bears on D1 (default engine); raised with the
-  user.**
+  Chromium does. **D1 decided by the user on 2026-10-22: `remotion` is the
+  default engine** (`config/motion.yaml`). HyperFrames stays available with
+  `--engine hyperframes`.
 - **Phase 4, the motion language and interpreter (C3):**
   `slides/motion_design.py` (validator, resolution into runtime steps,
   transition planning, generated JSON Schema) and the runtime interpreter.

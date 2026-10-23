@@ -278,7 +278,7 @@ msv production render-motion --production output/<run_id>/<language>/production.
     --translated-deck-dir state/<run_id>/analysis/slides/translated_<language> \
     --animation-dir state/<run_id>/analysis/slides/animation \
     --localization state/<run_id>/analysis/localization_<language>.json \
-    [--engine hyperframes|remotion] [--motion-design motion_design.json] [--output-name video.mp4]
+    [--engine remotion|hyperframes] [--motion-design motion_design.json] [--output-name video.mp4]
 msv production validate --production output/<run_id>/<language>/production.json [--localization ...] [--run-id ...]
 # static fallback (explicit request, or motion engine unavailable)
 msv production render-slideshow --run-id ... --project-id ... --language ... \
@@ -306,7 +306,7 @@ validation tooling around that step.
 **Production is animation-first.** Each language's video is rendered in
 one pass: `narrate` (TTS and the narration-driven timing), then
 `render-motion`, which renders the translated deck as an animated video
-with HyperFrames (frame-exact) in the **playful** motion style - springy
+with Remotion (frame-exact) in the **playful** motion style - springy
 pop-ins, word-by-word headlines, count-ups, cards popping in across the
 narration, a slow camera push-in, and a quick fade before each cut. The
 review gates are unchanged: the default language is reviewed before the
@@ -326,8 +326,8 @@ Adding or tuning a template is a YAML edit. See
 `.agents/skills/slideshow_video_production/SKILL.md` for the full command
 sequence.
 
-**Two engines, one animation.** `--engine hyperframes` (the default) and
-`--engine remotion` both render the translated deck itself and seek the same
+**Two engines, one animation.** `--engine remotion` (the default) and
+`--engine hyperframes` both render the translated deck itself and seek the same
 per-slide GSAP timelines frame by frame, so they cut, animate and
 transition every slide on the same frames. They differ in fonts:
 HyperFrames swaps system fonts (Georgia, Arial, generic `sans-serif`) for

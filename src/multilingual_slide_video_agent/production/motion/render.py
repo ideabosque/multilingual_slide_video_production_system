@@ -6,9 +6,9 @@ to an exact-length silent video, then applies the one shared post-pass
 (captions + narration) and B6 validation, writing `<output>.motion.json`
 and recording the video in production.json.
 
-Engines: `hyperframes` (frame-exact, the default) and `remotion` (frame-exact,
-deck-faithful iframes; Phase 3). Both seek the same per-slide GSAP
-timelines. The Playwright live-capture engine was retired on 2026-10-22.
+Engines: `remotion` (frame-exact, deck-faithful iframes; the default since
+2026-10-22, D1) and `hyperframes` (frame-exact, but substitutes system
+fonts). Both seek the same per-slide GSAP timelines. The Playwright live-capture engine was retired on 2026-10-22.
 """
 from __future__ import annotations
 
@@ -166,7 +166,7 @@ def render_motion(
         warnings = [f"motion design: {sid} falls back to its preset: {'; '.join(errs)}"
                     for sid, errs in design_record["fallback"].items()] + design_record["warnings"]
 
-    engine_name = engine_name or str(ctx.motion_config.get("default_engine", "hyperframes"))
+    engine_name = engine_name or str(ctx.motion_config.get("default_engine", "remotion"))
     engine = get_engine(engine_name)
     missing = engine.check_available()
     if missing:
