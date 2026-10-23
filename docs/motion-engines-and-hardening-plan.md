@@ -74,7 +74,9 @@ branch `feature/remotion-and-motion-language`).**
   - Every new effect passes a seek-order test.
   - Exit sample: a hand-written design renders in both engines (fixture
     test). `docs/examples/motion_design.food-manufacturing.json` is a
-    worked example for the reference deck.
+    worked example for the reference deck. Rendered with Remotion, it
+    passes validation in en-US (9:57, in 6:24) and zh-TW (11:27, in 7:09);
+    every node target lands on the matching translated element.
   - Tests: 139 → 201.
 - **Deviations from C3/B5 as written:**
   - Transitions don't use `@remotion/transitions` or
